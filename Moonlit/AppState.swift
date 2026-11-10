@@ -167,13 +167,23 @@ final class AppState: ObservableObject {
                 turns.append(.init(role: role, content: text))
             }
         }
-        for m in (threads[p.id] ?? []).suffix(30) where !m.isError {
+        let thread = Array((threads[p.id] ?? []).suffix(30))
+        for (i, m) in thread.enumerated() where !m.isError {
+            // Drop a question whose reply failed, so it isn't answered again later.
+            if m.role == .user,
+               let reply = thread[(i + 1)...].first(where: { $0.role == .psychic && !$0.text.isEmpty }),
+               reply.isError,
+               !thread[(i + 1)...].prefix(while: { $0.id != reply.id }).contains(where: { $0.role == .user }) {
+                continue
+            }
             switch m.role {
             case .user: push("user", m.apiNote.map { m.text + "\n\n" + $0 } ?? m.text)
             case .psychic: push("assistant", m.text)
             case .card: break
             }
         }
+        // Lines shown after the question (like "Pulling one card…") aren't part of what Claude answers.
+        while turns.last?.role == "assistant" { turns.removeLast() }
         if turns.first?.role == "assistant" {
             turns.insert(.init(role: "user", content: "(The user opens a reading with you.)"), at: 0)
         }

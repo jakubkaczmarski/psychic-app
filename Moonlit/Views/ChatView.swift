@@ -19,8 +19,20 @@ struct ChatView: View {
                         .textCase(.uppercase)
                         .foregroundStyle(Theme.faint)
                         .padding(.vertical, 6)
-                    ForEach(messages) { m in
-                        MessageRow(message: m, psychic: psychic).id(m.id)
+                    let lastUserID = messages.last(where: { $0.role == .user })?.id
+                    ForEach(Array(messages.enumerated()), id: \.element.id) { i, m in
+                        // Like a messaging app: the avatar sits only on the last bubble of a run.
+                        // The typing bubble carries the avatar while they're still typing.
+                        let next = i + 1 < messages.count ? messages[i + 1] : nil
+                        let showAvatar = next.map { $0.role == .user } ?? (app.typingFor != psychic.id)
+                        MessageRow(message: m, psychic: psychic, showAvatar: showAvatar,
+                                   showSeen: m.id == lastUserID && m.seen == true)
+                            .id(m.id)
+                    }
+                    if app.typingFor == psychic.id {
+                        TypingRow(psychic: psychic)
+                            .id("typing")
+                            .transition(.opacity)
                     }
                     Color.clear.frame(height: 1).id("bottom")
                 }
@@ -35,6 +47,10 @@ struct ChatView: View {
             .onChange(of: messages) {
                 withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("bottom", anchor: .bottom) }
             }
+            .onChange(of: app.typingFor) {
+                withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("bottom", anchor: .bottom) }
+            }
+            .animation(.easeOut(duration: 0.2), value: app.typingFor)
         }
         .background(Theme.bg)
         .safeAreaInset(edge: .bottom) { composer }
@@ -137,24 +153,57 @@ struct ChatView: View {
     }
 }
 
+/// "Selene is typing" bubble.
+struct TypingRow: View {
+    let psychic: Psychic
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            AvatarView(psychic: psychic, size: 30)
+            TypingDots()
+                .padding(.horizontal, 16).padding(.vertical, 15)
+                .background(Theme.surfaceRaised, in: UnevenRoundedRectangle(topLeadingRadius: 18, bottomLeadingRadius: 4, bottomTrailingRadius: 18, topTrailingRadius: 18))
+                .overlay(UnevenRoundedRectangle(topLeadingRadius: 18, bottomLeadingRadius: 4, bottomTrailingRadius: 18, topTrailingRadius: 18).stroke(Theme.border, lineWidth: 1))
+            Spacer(minLength: 40)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(psychic.short) is typing")
+    }
+}
+
 struct MessageRow: View {
     let message: ChatMessage
     let psychic: Psychic
+    var showAvatar = true
+    var showSeen = false
 
     var body: some View {
         switch message.role {
         case .user:
-            HStack {
-                Spacer(minLength: 60)
-                Text(message.text)
-                    .font(.system(size: 16))
-                    .foregroundStyle(Theme.onGold)
-                    .padding(.horizontal, 14).padding(.vertical, 11)
-                    .background(Theme.gold, in: UnevenRoundedRectangle(topLeadingRadius: 18, bottomLeadingRadius: 18, bottomTrailingRadius: 4, topTrailingRadius: 18))
+            VStack(alignment: .trailing, spacing: 3) {
+                HStack {
+                    Spacer(minLength: 60)
+                    Text(message.text)
+                        .font(.system(size: 16))
+                        .foregroundStyle(Theme.onGold)
+                        .padding(.horizontal, 14).padding(.vertical, 11)
+                        .background(Theme.gold, in: UnevenRoundedRectangle(topLeadingRadius: 18, bottomLeadingRadius: 18, bottomTrailingRadius: 4, topTrailingRadius: 18))
+                }
+                if showSeen {
+                    Text("Seen")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Theme.faint)
+                        .padding(.trailing, 4)
+                        .transition(.opacity)
+                }
             }
+            .animation(.easeOut(duration: 0.2), value: showSeen)
         case .psychic:
             HStack(alignment: .bottom, spacing: 8) {
-                AvatarView(psychic: psychic, size: 30)
+                if showAvatar {
+                    AvatarView(psychic: psychic, size: 30)
+                } else {
+                    Color.clear.frame(width: 30, height: 30)
+                }
                 Group {
                     if message.text.isEmpty {
                         HStack(spacing: 10) {

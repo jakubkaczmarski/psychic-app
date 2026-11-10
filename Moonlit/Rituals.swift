@@ -20,6 +20,10 @@ struct RitualStyle {
     let intro: String
     /// Greeting when the user comes back after a while. `{name}` is replaced.
     let welcomeBack: String
+    /// Typing speed in characters per second: Ivy is slow, Kaz and Zephyr are fast.
+    var typingSpeed: Double = 20
+    /// Seconds spent "reading" the user's message before typing starts.
+    var readDelay: ClosedRange<Double> = 0.8...1.4
 }
 
 enum Rituals {
@@ -30,19 +34,24 @@ enum Rituals {
     private static let styles: [String: RitualStyle] = [
         "selene": .init(button: "Read tonight's moon", buttonSymbol: "moon.stars",
                         intro: "Let me draw back the curtain and look at the moon for you…",
-                        welcomeBack: "There you are, {name}. The moon has changed since we last spoke, and I wondered about you."),
+                        welcomeBack: "There you are, {name}. The moon has changed since we last spoke, and I wondered about you.",
+                        typingSpeed: 16, readDelay: 1.2...2.0),
         "kaz": .init(button: "Run my forecast", buttonSymbol: "chart.line.uptrend.xyaxis",
                      intro: "Running your numbers. Give me a second.",
-                     welcomeBack: "{name}. Back for the next quarter. Good. Let's review."),
+                     welcomeBack: "{name}. Back for the next quarter. Good. Let's review.",
+                     typingSpeed: 45, readDelay: 0.3...0.6),
         "ivy": .init(button: "Swirl the cup", buttonSymbol: "cup.and.saucer",
                      intro: "Swirl it three times, love, then turn it over on the saucer. Let's see…",
-                     welcomeBack: "Oh, {name}, you came back! Sit down, love, I'll put the kettle on."),
+                     welcomeBack: "Oh, {name}, you came back! Sit down, love, I'll put the kettle on.",
+                     typingSpeed: 11, readDelay: 1.6...2.6),
         "zephyr": .init(button: "Shake the crystal ball", buttonSymbol: "sparkles",
                         intro: "okay hold on, shaking the ball… it's going cloudy… ooh.",
-                        welcomeBack: "{name}!! the ball literally glowed when you walked in. welcome back to the chaos."),
+                        welcomeBack: "{name}!! the ball literally glowed when you walked in. welcome back to the chaos.",
+                        typingSpeed: 38, readDelay: 0.3...0.8),
         "mirela": .init(button: "Cut the deck", buttonSymbol: "suit.heart",
                         intro: "Cut the deck with your left hand, my dear. Now, let me turn one over…",
-                        welcomeBack: "{name}, you're back. Sit, sit. I had a feeling you'd come today."),
+                        welcomeBack: "{name}, you're back. Sit, sit. I had a feeling you'd come today.",
+                        typingSpeed: 22, readDelay: 0.8...1.4),
     ]
 
     /// Performs the psychic's ritual. Returns the card to show and a note for Claude.

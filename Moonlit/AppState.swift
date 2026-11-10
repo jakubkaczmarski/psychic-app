@@ -25,6 +25,8 @@ final class AppState: ObservableObject {
     @Published var onboarded: Bool { didSet { defaults.set(onboarded, forKey: "onboarded") } }
     @Published var threads: [String: [ChatMessage]] { didSet { saveThreads() } }
     @Published var answeringFor: String?
+    /// The psychic currently shown as typing.
+    @Published var typingFor: String?
     @Published var path: [Route] = []
     /// Where readings come from. Empty means demo mode (pre-written replies).
     @Published var serverURL: String { didSet { defaults.set(serverURL, forKey: "serverURL"); serverOnline = nil } }
@@ -238,44 +240,86 @@ final class AppState: ObservableObject {
         send(Rituals.style(for: p.id).button, to: p, ritual: true)
     }
 
+    /// Replies like a person texting: reads the message ("Seen"), types, and sends
+    /// the reply as a few short bubbles at the psychic's own typing speed.
     private func respond(as p: Psychic, to question: String, ritual: Ritual?) {
-        let reply = ChatMessage(role: .psychic, text: "")
-        let replyID = reply.id
         let history = apiTurns(for: p)
         let memory = memoryNotes(for: p)
-        threads[p.id, default: []].append(reply)
+        let userMessageID = threads[p.id]?.last(where: { $0.role == .user })?.id
+        let style = Rituals.style(for: p.id)
         answeringFor = p.id
 
         let name = userName.trimmingCharacters(in: .whitespaces)
         let sign = sign
 
         Task {
-            defer { answeringFor = nil }
-            guard let client else {
-                try? await Task.sleep(nanoseconds: 1_300_000_000)
-                update(p.id, replyID) { $0.text = self.demoReply(p, question, ritual: ritual != nil) }
-                return
-            }
-            do {
-                try await client.stream(psychicID: p.id, userName: name, sign: sign, turns: history, memory: memory,
-                                        mood: Daily.mood(for: p.id)) { [weak self] delta in
-                    self?.update(p.id, replyID) { $0.text += delta }
+            defer { answeringFor = nil; typingFor = nil }
+            let started = Date()
+
+            // Fetch the reply while the psychic "reads" the message.
+            async let fetched = fetchReply(p, question: question, ritual: ritual != nil,
+                                           history: history, memory: memory, name: name, sign: sign)
+            try? await Task.sleep(for: .seconds(Double.random(in: style.readDelay)))
+            if let userMessageID { update(p.id, userMessageID) { $0.seen = true } }
+            try? await Task.sleep(for: .seconds(0.4))
+            typingFor = p.id
+
+            switch await fetched {
+            case .success(let text):
+                let parts = Self.bubbles(from: text)
+                guard !parts.isEmpty else {
+                    threads[p.id, default: []].append(ChatMessage(role: .psychic, text: "…the vision faded. Ask me again?", isError: true))
+                    return
                 }
-                serverOnline = true
-                update(p.id, replyID) { msg in
-                    msg.text = msg.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if msg.text.isEmpty { msg.text = "…the vision faded. Ask me again?"; msg.isError = true }
+                for (i, part) in parts.enumerated() {
+                    // Time to type this bubble; the first one counts time already spent waiting.
+                    var wait = min(max(Double(part.count) / style.typingSpeed, 0.6), 4.5)
+                    if i == 0 { wait -= Date().timeIntervalSince(started) - style.readDelay.lowerBound }
+                    typingFor = p.id
+                    if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
+                    threads[p.id, default: []].append(ChatMessage(role: .psychic, text: part))
+                    if i < parts.count - 1 {
+                        typingFor = nil
+                        try? await Task.sleep(for: .seconds(Double.random(in: 0.3...0.8)))
+                    }
                 }
-            } catch {
-                update(p.id, replyID) { msg in
-                    let partial = msg.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let note = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-                    msg.text = partial.isEmpty ? note : partial + "\n\n(" + note + ")"
-                    msg.isError = true
-                }
+            case .failure(let error):
+                let note = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                threads[p.id, default: []].append(ChatMessage(role: .psychic, text: note, isError: true))
             }
         }
     }
+
+    /// Gets the whole reply from the server (or demo mode). It's shown bubble by bubble, not streamed.
+    private func fetchReply(_ p: Psychic, question: String, ritual: Bool, history: [ReadingClient.Turn],
+                            memory: [String], name: String, sign: String?) async -> Result<String, Error> {
+        guard let client else { return .success(demoReply(p, question, ritual: ritual)) }
+        let buffer = TextBuffer()
+        do {
+            try await client.stream(psychicID: p.id, userName: name, sign: sign, turns: history, memory: memory,
+                                    mood: Daily.mood(for: p.id)) { delta in buffer.text += delta }
+            serverOnline = true
+            return .success(buffer.text)
+        } catch {
+            return .failure(error)
+        }
+    }
+
+    /// Splits a reply into chat bubbles at blank lines. At most 5; extras join the last one.
+    static func bubbles(from text: String) -> [String] {
+        var parts = text.components(separatedBy: "\n")
+            .split(whereSeparator: { $0.trimmingCharacters(in: .whitespaces).isEmpty })
+            .map { $0.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        if parts.count > 5 {
+            let tail = parts[4...].joined(separator: " ")
+            parts = Array(parts[..<4]) + [tail]
+        }
+        return parts
+    }
+
+    /// Collects streamed text on the main actor.
+    private final class TextBuffer { var text = "" }
 
     private func update(_ psychicID: String, _ messageID: UUID, _ change: (inout ChatMessage) -> Void) {
         guard var thread = threads[psychicID], let i = thread.firstIndex(where: { $0.id == messageID }) else { return }

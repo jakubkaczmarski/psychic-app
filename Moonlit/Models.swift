@@ -22,6 +22,8 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     var date: Date? = Date()
     /// Marks the first message of a new visit; earlier visits are sent as memory.
     var startsVisit: Bool? = nil
+    /// The psychic has "read" this user message.
+    var seen: Bool? = nil
 }
 
 struct Psychic: Identifiable, Hashable {

@@ -68,6 +68,13 @@ Everything daily is worked out on the phone from the date (`Moonlit/Daily.swift`
 - **Morning messages**: a home-screen card leads to a screen that explains the messages and previews tomorrow's real one, before iOS asks for notification permission. Once you allow it, the next 7 days of messages are scheduled locally at 9:00 (`Moonlit/MorningMessages.swift`); the queue is topped up whenever the app opens. Tapping a message opens your psychic's chat about that day's card. No push server or certificates are needed.
 - Debug builds have **Settings → Debug: send a morning message in 5 seconds**.
 
+### Texting like a person
+Replies are written and delivered like real texts, not one polished answer.
+
+- **Writing**: each psychic has a `texting` style in `server/src/psychics.ts`. Kaz sends two-word bursts, Zephyr writes all lowercase and now and then fixes a typo with "*", Ivy adds "Oh, and…" afterthoughts and sometimes signs off "love, Ivy x", and Mirela often asks something back first. Shared rules ask for short messages (under about 20 words), no restating the question, no tidy summaries, and varied openings.
+- **Bubbles**: the server separates messages with blank lines; the app (`AppState.respond`) splits them into separate chat bubbles, at most 5.
+- **Rhythm**: the user's message is marked **Seen** after a short "reading" pause, then a typing bubble appears and each message arrives after a delay based on its length and the psychic's typing speed (`typingSpeed` and `readDelay` in `Moonlit/Rituals.swift`). Ivy types slowly; Kaz and Zephyr are quick. The reply is fetched while the psychic "reads", so the wait isn't longer than before.
+
 ### How the app talks about AI
 Screens say "For entertainment only" without labelling the psychics as AI, for a smoother experience. The full disclosure stays in the Settings footer. The server tells each psychic never to raise it unprompted, but to answer honestly if a user sincerely asks whether they're a real person, and to step out of character if someone seems to be in crisis.
 

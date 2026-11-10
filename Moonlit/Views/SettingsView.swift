@@ -63,6 +63,9 @@ struct SettingsView: View {
                         dismiss()
                         app.replayOnboarding()
                     }
+                    #if DEBUG
+                    Button("Debug: pretend a day has passed") { app.ageReadingsByOneDay() }
+                    #endif
                 }
 
                 Section {

@@ -78,9 +78,7 @@ final class AppState: ObservableObject {
     }
 
     func openChat(_ p: Psychic, asking question: String? = nil, note: String? = nil) {
-        if threads[p.id]?.isEmpty ?? true {
-            threads[p.id] = [ChatMessage(role: .psychic, text: greeting(for: p))]
-        }
+        ensureThread(p)
         if path.last != .chat(p.id) { path.append(.chat(p.id)) }
         if let question { send(question, to: p, note: note) }
     }
@@ -101,36 +99,55 @@ final class AppState: ObservableObject {
         onboarded = false
     }
 
+    /// A gap this long between messages starts a new visit.
+    static let visitGap: TimeInterval = 6 * 60 * 60
+
+    /// Starts a thread with a greeting, or greets the user again when they come back after a while.
     func ensureThread(_ p: Psychic) {
-        if threads[p.id]?.isEmpty ?? true {
+        guard let thread = threads[p.id], !thread.isEmpty else {
             threads[p.id] = [ChatMessage(role: .psychic, text: greeting(for: p))]
+            return
+        }
+        // Messages saved before dates existed count as old.
+        let last = thread.last?.date ?? .distantPast
+        if Date().timeIntervalSince(last) > Self.visitGap {
+            let name = userName.trimmingCharacters(in: .whitespaces)
+            let text = Rituals.style(for: p.id).welcomeBack
+                .replacingOccurrences(of: "{name}", with: name.isEmpty ? p.defaultName.capitalized : name)
+            threads[p.id, default: []].append(ChatMessage(role: .psychic, text: text, startsVisit: true))
         }
     }
 
-    /// `note` is extra context for Claude that isn't shown in the bubble; when set, no card is drawn.
-    func send(_ raw: String, to p: Psychic, note: String? = nil) {
+    /// Sends a question. `note` is extra context for Claude that isn't shown in the bubble.
+    /// With `ritual` (or a question asking for a card), the psychic performs their ritual first.
+    func send(_ raw: String, to p: Psychic, note: String? = nil, ritual: Bool = false) {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, answeringFor == nil else { return }
 
-        var drawn: TarotCard?
         var user = ChatMessage(role: .user, text: text, apiNote: note)
-        if note == nil, Self.wantsCard(text) {
-            let card = Catalog.deck.randomElement()!
-            drawn = card
-            user.apiNote = "[The app just drew a tarot card for this question: \(card.name) (\(card.numeral)). Traditional meaning: \(card.meaning) Interpret this card for the user in your own voice.]"
+        var performed: Ritual?
+        if note == nil, ritual || Self.wantsCard(text) {
+            let result = Rituals.perform(for: p.id, sign: sign)
+            performed = result.ritual
+            user.apiNote = result.note
         }
         threads[p.id, default: []].append(user)
-        if let drawn {
-            threads[p.id, default: []].append(ChatMessage(role: .psychic, text: p.cardIntro))
-            threads[p.id, default: []].append(ChatMessage(role: .card, text: drawn.meaning, card: drawn))
+        if let performed {
+            threads[p.id, default: []].append(ChatMessage(role: .psychic, text: Rituals.style(for: p.id).intro))
+            threads[p.id, default: []].append(ChatMessage(role: .ritual, text: performed.detail, ritual: performed))
         }
-        respond(as: p, to: text)
+        respond(as: p, to: text, ritual: performed)
     }
 
-    private func respond(as p: Psychic, to question: String) {
+    func performRitual(with p: Psychic) {
+        send(Rituals.style(for: p.id).button, to: p, ritual: true)
+    }
+
+    private func respond(as p: Psychic, to question: String, ritual: Ritual?) {
         let reply = ChatMessage(role: .psychic, text: "")
         let replyID = reply.id
         let history = apiTurns(for: p)
+        let memory = memoryNotes(for: p)
         threads[p.id, default: []].append(reply)
         answeringFor = p.id
 
@@ -141,11 +158,11 @@ final class AppState: ObservableObject {
             defer { answeringFor = nil }
             guard let client else {
                 try? await Task.sleep(nanoseconds: 1_300_000_000)
-                update(p.id, replyID) { $0.text = self.demoReply(p, question) }
+                update(p.id, replyID) { $0.text = self.demoReply(p, question, ritual: ritual != nil) }
                 return
             }
             do {
-                try await client.stream(psychicID: p.id, userName: name, sign: sign, turns: history) { [weak self] delta in
+                try await client.stream(psychicID: p.id, userName: name, sign: sign, turns: history, memory: memory) { [weak self] delta in
                     self?.update(p.id, replyID) { $0.text += delta }
                 }
                 serverOnline = true
@@ -173,7 +190,32 @@ final class AppState: ObservableObject {
     // MARK: Conversation sent to the server
     // The psychic's instructions live on the server; the app sends only the chat.
 
-    /// Converts the visible thread into alternating user/assistant turns that start and end on a user turn.
+    /// Index where the current visit starts; everything before it is an earlier visit.
+    private func visitStart(in thread: [ChatMessage]) -> Int {
+        thread.lastIndex(where: { $0.startsVisit == true }) ?? 0
+    }
+
+    /// Short notes about earlier visits, so the psychic can remember them. Most recent last.
+    private func memoryNotes(for p: Psychic) -> [String] {
+        let thread = threads[p.id] ?? []
+        let earlier = thread[..<visitStart(in: thread)]
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d"
+        var notes: [String] = []
+        for (i, m) in earlier.enumerated() where m.role == .user && !m.isError {
+            var note = ""
+            if let date = m.date { note += formatter.string(from: date) + ": " }
+            note += "asked \"\(m.text.prefix(140))\""
+            // Include the ritual result that answered this question, if there was one.
+            if let ritual = earlier[(i + 1)...].prefix(while: { $0.role != .user }).first(where: { $0.role == .ritual })?.ritual {
+                note += " (ritual result: \(ritual.title))"
+            }
+            notes.append(note)
+        }
+        return Array(notes.suffix(8))
+    }
+
+    /// Converts the current visit into alternating user/assistant turns that start and end on a user turn.
     private func apiTurns(for p: Psychic) -> [ReadingClient.Turn] {
         var turns: [ReadingClient.Turn] = []
         func push(_ role: String, _ text: String) {
@@ -184,7 +226,8 @@ final class AppState: ObservableObject {
                 turns.append(.init(role: role, content: text))
             }
         }
-        let thread = Array((threads[p.id] ?? []).suffix(30))
+        let all = threads[p.id] ?? []
+        let thread = Array(all[visitStart(in: all)...].suffix(30))
         for (i, m) in thread.enumerated() where !m.isError {
             // Drop a question whose reply failed, so it isn't answered again later.
             if m.role == .user,
@@ -196,7 +239,7 @@ final class AppState: ObservableObject {
             switch m.role {
             case .user: push("user", m.apiNote.map { m.text + "\n\n" + $0 } ?? m.text)
             case .psychic: push("assistant", m.text)
-            case .card: break
+            case .card, .ritual: break
             }
         }
         // Lines shown after the question (like "Pulling one card…") aren't part of what Claude answers.
@@ -214,9 +257,20 @@ final class AppState: ObservableObject {
         return t.contains("tarot") || t.contains("draw") || t.contains(" card")
     }
 
-    private func demoReply(_ p: Psychic, _ text: String) -> String {
+    #if DEBUG
+    /// Testing aid: pretends every saved message is a day older, so the next visit triggers memory.
+    func ageReadingsByOneDay() {
+        threads = threads.mapValues { $0.map { m in
+            var m = m
+            m.date = (m.date ?? Date()).addingTimeInterval(-86_400)
+            return m
+        } }
+    }
+    #endif
+
+    private func demoReply(_ p: Psychic, _ text: String, ritual: Bool) -> String {
         let t = text.lowercased()
-        if Self.wantsCard(text) { return "This card is speaking straight to you. Sit with it tonight. (Demo reply: set a server address in Settings for live readings.)" }
+        if ritual { return "This card is speaking straight to you. Sit with it tonight. (Demo reply: set a server address in Settings for live readings.)" }
         let pool: [String]
         let topic: String
         if ["love", "crush", "date", "partner", "relationship", "heart", " ex", "the one", "marr"].contains(where: t.contains) {

@@ -7,7 +7,7 @@ struct TarotCard: Codable, Hashable {
 }
 
 struct ChatMessage: Identifiable, Codable, Equatable {
-    enum Role: String, Codable { case user, psychic, card }
+    enum Role: String, Codable { case user, psychic, card, ritual }
 
     var id = UUID()
     var role: Role
@@ -16,6 +16,12 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     /// Extra context sent to Claude with a user turn but not shown in the bubble.
     var apiNote: String? = nil
     var isError = false
+    /// Result of a psychic's ritual (role `.ritual`).
+    var ritual: Ritual? = nil
+    /// When the message was added. Missing on messages saved by older versions.
+    var date: Date? = Date()
+    /// Marks the first message of a new visit; earlier visits are sent as memory.
+    var startsVisit: Bool? = nil
 }
 
 struct Psychic: Identifiable, Hashable {

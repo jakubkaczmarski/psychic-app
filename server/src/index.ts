@@ -57,7 +57,12 @@ interface ReadingRequest {
   userName: string;
   sign: string | null;
   messages: Turn[];
+  /** Short notes about earlier readings with this psychic, written by the app. */
+  memory: string[];
 }
+
+const MAX_MEMORY = 10;
+const MAX_MEMORY_CHARS = 200;
 
 function parseReading(body: unknown): ReadingRequest | string {
   if (!body || typeof body !== "object") return "Body must be a JSON object.";
@@ -84,7 +89,14 @@ function parseReading(body: unknown): ReadingRequest | string {
   if (messages[0].role !== "user") messages.unshift({ role: "user", content: "(The user opens a reading with you.)" });
   if (messages.at(-1)!.role !== "user") return "The last message must come from the user.";
 
-  return { psychicId: b.psychicId, userName, sign, messages };
+  const memory = Array.isArray(b.memory)
+    ? b.memory
+        .filter((m): m is string => typeof m === "string" && m.trim().length > 0)
+        .slice(-MAX_MEMORY)
+        .map((m) => m.replace(/\s+/g, " ").trim().slice(0, MAX_MEMORY_CHARS))
+    : [];
+
+  return { psychicId: b.psychicId, userName, sign, messages, memory };
 }
 
 async function readJSON(req: http.IncomingMessage): Promise<unknown> {
@@ -152,7 +164,7 @@ async function handleReading(req: http.IncomingMessage, res: http.ServerResponse
   const stream = client.beta.messages.stream({
     model: MODEL,
     max_tokens: 2000,
-    system: systemPrompt(persona, parsed.userName, parsed.sign),
+    system: systemPrompt(persona, parsed.userName, parsed.sign, parsed.memory),
     messages: parsed.messages,
     output_config: { effort: "low" },
     // If Claude declines, the API re-runs the request on a fallback model automatically.

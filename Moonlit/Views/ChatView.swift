@@ -38,6 +38,10 @@ struct ChatView: View {
         }
         .background(Theme.bg)
         .safeAreaInset(edge: .bottom) { composer }
+        .onReceive(NotificationCenter.default.publisher(for: .deviceDidShake)) { _ in
+            // Shaking the phone shakes Zephyr's crystal ball.
+            if psychic.id == "zephyr", !busy { app.performRitual(with: psychic) }
+        }
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(Theme.bg, for: .navigationBar)
         .toolbar {
@@ -65,7 +69,19 @@ struct ChatView: View {
         VStack(spacing: 8) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    ForEach(Catalog.chips, id: \.self) { chip in
+                    let style = Rituals.style(for: psychic.id)
+                    Button { app.performRitual(with: psychic) } label: {
+                        Label(style.button, systemImage: style.buttonSymbol)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(Theme.onGold)
+                            .padding(.horizontal, 16)
+                            .frame(minHeight: 40)
+                            .background(Theme.gold, in: Capsule())
+                    }
+                    .disabled(busy)
+                    .opacity(busy ? 0.5 : 1)
+
+                    ForEach(psychic.asks, id: \.self) { chip in
                         Button(chip) { app.send(chip, to: psychic) }
                             .font(.system(size: 14))
                             .foregroundStyle(Theme.text)
@@ -184,6 +200,65 @@ struct MessageRow: View {
                 }
                 .transition(.scale(scale: 0.9).combined(with: .opacity))
             }
+        case .ritual:
+            if let ritual = message.ritual {
+                HStack(alignment: .bottom, spacing: 8) {
+                    AvatarView(psychic: psychic, size: 30)
+                    RitualCardView(ritual: ritual, accent: Color(hex: psychic.ringHex))
+                    Spacer(minLength: 0)
+                }
+                .transition(.scale(scale: 0.9).combined(with: .opacity))
+            }
         }
+    }
+}
+
+/// The result of a psychic's ritual: the moon, a forecast, tea leaves, a vision or a playing card.
+struct RitualCardView: View {
+    let ritual: Ritual
+    let accent: Color
+    @State private var shown = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 14) {
+                Image(systemName: ritual.symbol)
+                    .font(.system(size: 30))
+                    .foregroundStyle(Theme.gold)
+                    .frame(width: 56, height: 56)
+                    .background(accent.opacity(0.35), in: RoundedRectangle(cornerRadius: 14))
+                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.gold.opacity(0.6), lineWidth: 1))
+                    .scaleEffect(shown ? 1 : 0.6)
+                    .rotationEffect(.degrees(shown ? 0 : -20))
+                VStack(alignment: .leading, spacing: 4) {
+                    EyebrowText(ritual.eyebrow)
+                    Text(ritual.title)
+                        .font(Theme.display(22))
+                        .foregroundStyle(Theme.gold)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Text(ritual.detail)
+                .font(.system(size: 15))
+                .foregroundStyle(Theme.text)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(14)
+        .frame(width: 270, alignment: .leading)
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(Theme.gold, lineWidth: 1))
+        .accessibilityElement(children: .combine)
+        .onAppear { withAnimation(.spring(response: 0.6, dampingFraction: 0.6)) { shown = true } }
+    }
+}
+
+extension Notification.Name {
+    static let deviceDidShake = Notification.Name("deviceDidShake")
+}
+
+extension UIWindow {
+    open override func motionEnded(_ motion: UIEvent.EventSubtype, with event: UIEvent?) {
+        if motion == .motionShake { NotificationCenter.default.post(name: .deviceDidShake, object: nil) }
+        super.motionEnded(motion, with: event)
     }
 }

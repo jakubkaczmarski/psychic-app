@@ -38,7 +38,12 @@ struct SettingsView: View {
                         }
                     }
                     .disabled(!app.isLive || checking)
-                    Button("Use local server") { app.serverURL = ReadingClient.defaultServerURL }
+                    if app.serverURL != ReadingClient.defaultServerURL {
+                        Button("Use online server") { app.serverURL = ReadingClient.defaultServerURL }
+                    }
+                    if app.serverURL != ReadingClient.localServerURL {
+                        Button("Use local server (this Mac)") { app.serverURL = ReadingClient.localServerURL }
+                    }
                 } header: {
                     Text("Reading server")
                 } footer: {
@@ -50,6 +55,13 @@ struct SettingsView: View {
                     Picker("Star sign", selection: Binding(get: { app.sign ?? "" }, set: { app.sign = $0.isEmpty ? nil : $0 })) {
                         Text("Not set").tag("")
                         ForEach(Catalog.signs) { Text($0.name).tag($0.name) }
+                    }
+                }
+
+                Section {
+                    Button("Replay onboarding") {
+                        dismiss()
+                        app.replayOnboarding()
                     }
                 }
 

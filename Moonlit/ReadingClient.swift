@@ -3,9 +3,10 @@ import Foundation
 /// Talks to the Moonlit server, which holds the Claude API key and streams readings back.
 /// The app never sees an Anthropic key.
 struct ReadingClient {
-    /// Default server. The simulator reaches the Mac's localhost directly.
-    /// Change it here (or in Settings) to your deployed URL, e.g. https://moonlit.up.railway.app
-    static let defaultServerURL = "http://localhost:8787"
+    /// Default server: the deployed Moonlit server on Railway.
+    static let defaultServerURL = "https://moonlit-server-production.up.railway.app"
+    /// A server running on this Mac (`npm run dev`); the simulator reaches it directly.
+    static let localServerURL = "http://localhost:8787"
     /// Optional shared key; must match MOONLIT_APP_KEY on the server if that is set.
     static let appKey = ""
 

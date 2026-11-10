@@ -77,12 +77,28 @@ final class AppState: ObservableObject {
         return text
     }
 
-    func openChat(_ p: Psychic, asking question: String? = nil) {
+    func openChat(_ p: Psychic, asking question: String? = nil, note: String? = nil) {
         if threads[p.id]?.isEmpty ?? true {
             threads[p.id] = [ChatMessage(role: .psychic, text: greeting(for: p))]
         }
         if path.last != .chat(p.id) { path.append(.chat(p.id)) }
-        if let question { send(question, to: p) }
+        if let question { send(question, to: p, note: note) }
+    }
+
+    // MARK: Onboarding
+
+    /// Saves the onboarding answers, enters the app and, if given, opens the first reading.
+    func completeOnboarding(goal: String?, pains: [String], match: Psychic, question: String?, note: String?) {
+        defaults.set(goal, forKey: "onboardingGoal")
+        defaults.set(pains, forKey: "onboardingPains")
+        path = []
+        onboarded = true
+        if let question { openChat(match, asking: question, note: note) }
+    }
+
+    func replayOnboarding() {
+        path = []
+        onboarded = false
     }
 
     func ensureThread(_ p: Psychic) {
@@ -91,13 +107,14 @@ final class AppState: ObservableObject {
         }
     }
 
-    func send(_ raw: String, to p: Psychic) {
+    /// `note` is extra context for Claude that isn't shown in the bubble; when set, no card is drawn.
+    func send(_ raw: String, to p: Psychic, note: String? = nil) {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, answeringFor == nil else { return }
 
         var drawn: TarotCard?
-        var user = ChatMessage(role: .user, text: text)
-        if Self.wantsCard(text) {
+        var user = ChatMessage(role: .user, text: text, apiNote: note)
+        if note == nil, Self.wantsCard(text) {
             let card = Catalog.deck.randomElement()!
             drawn = card
             user.apiNote = "[The app just drew a tarot card for this question: \(card.name) (\(card.numeral)). Traditional meaning: \(card.meaning) Interpret this card for the user in your own voice.]"

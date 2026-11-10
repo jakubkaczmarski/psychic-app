@@ -32,7 +32,7 @@ struct RootView: View {
                         }
                 }
             } else {
-                WelcomeView()
+                OnboardingView()
                     .transition(.opacity)
             }
         }

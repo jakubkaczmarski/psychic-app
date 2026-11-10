@@ -175,7 +175,13 @@ export const STAR_SIGNS = new Set([
   "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces",
 ]);
 
-export function systemPrompt(p: PsychicPersona, userName: string, sign: string | null, memory: string[]): string {
+export function systemPrompt(
+  p: PsychicPersona,
+  userName: string,
+  sign: string | null,
+  memory: string[],
+  mood: string | null = null,
+): string {
   const examples = p.examples
     .map((e) => `User: ${e.user}\n${p.name}: ${e.reply}`)
     .join("\n\n");
@@ -203,9 +209,10 @@ Examples of your voice. Match the voice, never copy these lines:
 ${examples}
 
 The user's first name: ${userName || "not given"}. Their star sign: ${sign ?? "not given"}.
-${memoryBlock}
+${mood ? `Your mood today (shown to the user in the app): ${mood}. Let it colour your reply a little, and mention it only if it fits naturally.\n` : ""}${memoryBlock}
 How to reply:
 - Stay in character. Your voice should be instantly recognisable and different from the other four psychics.
+- Don't bring up being an AI or a character on your own. But never claim to be a human: if the user sincerely asks whether you are a real person, say honestly, warmly and in your own voice that you are an AI character, then carry on with the reading.
 - Use at most one signature phrase or habit per reply, and vary which one. If the conversation shows you used a phrase or habit recently, don't repeat it. Never end two replies the same way.
 - Length: ${p.length} Plain text only. No markdown, lists, headings or emoji.
 - Be playful and kind, and leave the user feeling better about the future. Give specific-sounding but harmless guidance: small actions, reflections, gentle nudges.

@@ -2,8 +2,8 @@ import SwiftUI
 
 struct HomeView: View {
     @EnvironmentObject var app: AppState
-    @State private var daily: TarotCard?
     @State private var showSettings = false
+    @State private var showMorningPrimer = false
 
     private var greetLine: String? {
         let name = app.userName.trimmingCharacters(in: .whitespaces)
@@ -35,7 +35,10 @@ struct HomeView: View {
                         .lineSpacing(3)
                 }
 
-                dailyCard
+                DailyCardTile()
+                if !app.morningMessagesOn && !app.morningPromptDismissed {
+                    morningPrompt
+                }
                 modeBanner
 
                 VStack(alignment: .leading, spacing: 12) {
@@ -57,7 +60,7 @@ struct HomeView: View {
                     }
                 }
 
-                Text("For entertainment only. Moonlit psychics are AI characters, not real advisors.")
+                Text("For entertainment only.")
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.faint)
                     .multilineTextAlignment(.center)
@@ -69,6 +72,15 @@ struct HomeView: View {
         .background(Theme.bg)
         .toolbar(.hidden, for: .navigationBar)
         .sheet(isPresented: $showSettings) { SettingsView() }
+        // A tapped morning message opens the chat, so close anything covering it.
+        .onReceive(NotificationCenter.default.publisher(for: .openDailyCard)) { _ in
+            showSettings = false
+            showMorningPrimer = false
+        }
+        .sheet(isPresented: $showMorningPrimer) {
+            MorningMessagesPrimer()
+                .presentationDetents([.large])
+        }
         .task { await app.checkServer() }
     }
 
@@ -107,27 +119,25 @@ struct HomeView: View {
         .padding(.top, 8)
     }
 
-    private var dailyCard: some View {
-        Button {
-            withAnimation(.spring(duration: 0.4)) { daily = Catalog.deck.randomElement() }
-        } label: {
-            HStack(spacing: 16) {
-                MiniTarotCard(numeral: daily?.numeral)
-                VStack(alignment: .leading, spacing: 4) {
-                    EyebrowText("Card of the day")
-                    if let daily {
-                        Text(daily.name).font(Theme.display(22)).foregroundStyle(Theme.gold)
-                        Text(daily.meaning).font(.system(size: 14)).foregroundStyle(Theme.textSoft)
-                            .fixedSize(horizontal: false, vertical: true)
-                    } else {
-                        Text("Tap to reveal your card").font(Theme.display(22)).foregroundStyle(Theme.textBright)
-                    }
+    private var morningPrompt: some View {
+        let p = app.matchedPsychic
+        return Button { showMorningPrimer = true } label: {
+            HStack(spacing: 12) {
+                AvatarView(psychic: p, size: 40)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Get a morning message from \(p.short)")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Theme.textBright)
+                    Text("Your card of the day, every morning at \(MorningMessages.hour):00")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.muted)
                 }
                 Spacer(minLength: 0)
+                Image(systemName: "bell.badge").foregroundStyle(Theme.gold)
             }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .cardSurface(strong: true)
+            .padding(14)
+            .background(Theme.surfaceRaised, in: RoundedRectangle(cornerRadius: 16))
+            .overlay(RoundedRectangle(cornerRadius: 16).stroke(Theme.gold.opacity(0.35), lineWidth: 1))
         }
         .buttonStyle(.plain)
     }
@@ -135,7 +145,7 @@ struct HomeView: View {
     private var banner: (icon: String, color: Color, text: String) {
         if !app.isLive { return ("wand.and.stars", Theme.gold, "Demo mode · connect a reading server in Settings") }
         if app.serverOnline == false { return ("wifi.exclamationmark", Theme.gold, "Can't reach the reading server · tap to check") }
-        return ("sparkles", Theme.online, "Live readings by Claude are on")
+        return ("sparkles", Theme.online, "Live readings are on")
     }
 
     @ViewBuilder private var modeBanner: some View {
@@ -167,6 +177,14 @@ struct PsychicRow: View {
                 Text(psychic.name).font(Theme.display(21)).foregroundStyle(Theme.textBright)
                 Text(psychic.specialty).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.gold)
                 Text(psychic.tagline).font(.system(size: 13)).foregroundStyle(Theme.muted)
+                HStack(spacing: 5) {
+                    Image(systemName: "sparkle").font(.system(size: 10))
+                    Text(Daily.mood(for: psychic.id))
+                }
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Theme.lilac)
+                .padding(.top, 2)
+                .accessibilityLabel("Mood today: \(Daily.mood(for: psychic.id))")
             }
             Spacer(minLength: 0)
             Image(systemName: "chevron.right").foregroundStyle(Theme.faint)

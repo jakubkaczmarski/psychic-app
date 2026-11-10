@@ -8,7 +8,19 @@ enum Route: Hashable {
 
 @MainActor
 final class AppState: ObservableObject {
-    @Published var userName: String { didSet { defaults.set(userName, forKey: "userName") } }
+    @Published var userName: String { didSet { defaults.set(userName, forKey: "userName"); nameChanged() } }
+
+    /// Morning messages include the name; rewrite them once typing has paused.
+    private var nameDebounce: Task<Void, Never>?
+    private func nameChanged() {
+        guard morningMessagesOn else { return }
+        nameDebounce?.cancel()
+        nameDebounce = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
+            self?.refreshMorningMessages()
+        }
+    }
     @Published var sign: String? { didSet { defaults.set(sign, forKey: "sign") } }
     @Published var onboarded: Bool { didSet { defaults.set(onboarded, forKey: "onboarded") } }
     @Published var threads: [String: [ChatMessage]] { didSet { saveThreads() } }
@@ -18,6 +30,20 @@ final class AppState: ObservableObject {
     @Published var serverURL: String { didSet { defaults.set(serverURL, forKey: "serverURL"); serverOnline = nil } }
     /// nil = not checked yet.
     @Published var serverOnline: Bool?
+
+    /// Your psychic: reads your card of the day and sends morning messages.
+    @Published var matchedPsychicID: String {
+        didSet { defaults.set(matchedPsychicID, forKey: "matchedPsychic"); refreshMorningMessages() }
+    }
+    /// Day (see `Daily.dayKey`) the card of the day was last revealed, and the streak up to that day.
+    @Published private(set) var dailyRevealDay: String? { didSet { defaults.set(dailyRevealDay, forKey: "dailyRevealDay") } }
+    @Published private(set) var dailyStreakCount: Int { didSet { defaults.set(dailyStreakCount, forKey: "dailyStreak") } }
+    /// The user turned on morning messages (iOS permission is checked separately).
+    @Published var morningMessagesOn: Bool {
+        didSet { defaults.set(morningMessagesOn, forKey: "morningMessagesOn"); refreshMorningMessages() }
+    }
+    /// The user said "Not now" to the morning-message prompt on the home screen.
+    @Published var morningPromptDismissed: Bool { didSet { defaults.set(morningPromptDismissed, forKey: "morningPromptDismissed") } }
 
     private let defaults = UserDefaults.standard
     private let deviceID: String
@@ -48,7 +74,75 @@ final class AppState: ObservableObject {
             deviceID = UUID().uuidString
             defaults.set(deviceID, forKey: "deviceID")
         }
+        let goal = defaults.string(forKey: "onboardingGoal")
+        matchedPsychicID = defaults.string(forKey: "matchedPsychic")
+            ?? OnboardingCatalog.goals.first { $0.id == goal }?.psychicID
+            ?? "selene"
+        dailyRevealDay = defaults.string(forKey: "dailyRevealDay")
+        dailyStreakCount = defaults.integer(forKey: "dailyStreak")
+        morningMessagesOn = defaults.bool(forKey: "morningMessagesOn")
+        morningPromptDismissed = defaults.bool(forKey: "morningPromptDismissed")
     }
+
+    // MARK: Daily: card of the day, streak, morning messages
+
+    var matchedPsychic: Psychic { Catalog.psychic(matchedPsychicID) }
+
+    var todaysCard: TarotCard { Daily.card(seed: deviceID) }
+
+    /// Makes the daily card differ between installs.
+    var dailySeed: String { deviceID }
+
+    var revealedToday: Bool { dailyRevealDay == Daily.dayKey() }
+
+    /// Days in a row the card was revealed; 0 once a day is missed.
+    var dailyStreak: Int {
+        guard let day = dailyRevealDay else { return 0 }
+        return day == Daily.dayKey() || day == Daily.dayKey(daysFrom: Date(), -1) ? dailyStreakCount : 0
+    }
+
+    func revealDailyCard() {
+        guard !revealedToday else { return }
+        dailyStreakCount = dailyRevealDay == Daily.dayKey(daysFrom: Date(), -1) ? dailyStreakCount + 1 : 1
+        dailyRevealDay = Daily.dayKey()
+    }
+
+    /// Opens your psychic's chat and asks about today's card.
+    func askAboutDailyCard() {
+        revealDailyCard()
+        guard onboarded else { return }
+        let card = todaysCard
+        path = []
+        openChat(matchedPsychic, asking: "My card of the day is \(card.name). What does it mean for me today?",
+                 note: Daily.cardNote(card))
+    }
+
+    /// Asks iOS for permission and, if granted, schedules the next week of messages.
+    func enableMorningMessages() async -> Bool {
+        let granted = await MorningMessages.requestPermission()
+        morningPromptDismissed = true
+        morningMessagesOn = granted
+        return granted
+    }
+
+    /// Rewrites the scheduled messages, e.g. after a name or psychic change. Safe to call often.
+    func refreshMorningMessages() {
+        guard morningMessagesOn else { MorningMessages.cancelAll(); return }
+        let psychic = matchedPsychic
+        let name = userName.trimmingCharacters(in: .whitespaces)
+        let seed = deviceID
+        Task { await MorningMessages.schedule(psychic: psychic, name: name, seed: seed) }
+    }
+
+    #if DEBUG
+    func sendTestMorningMessage() {
+        let psychic = matchedPsychic, name = userName.trimmingCharacters(in: .whitespaces), seed = deviceID
+        Task {
+            if !(await MorningMessages.isAuthorized()) { _ = await MorningMessages.requestPermission() }
+            await MorningMessages.sendTest(psychic: psychic, name: name, seed: seed)
+        }
+    }
+    #endif
 
     // MARK: Server
 
@@ -89,6 +183,7 @@ final class AppState: ObservableObject {
     func completeOnboarding(goal: String?, pains: [String], match: Psychic, question: String?, note: String?) {
         defaults.set(goal, forKey: "onboardingGoal")
         defaults.set(pains, forKey: "onboardingPains")
+        matchedPsychicID = match.id
         path = []
         onboarded = true
         if let question { openChat(match, asking: question, note: note) }
@@ -162,7 +257,8 @@ final class AppState: ObservableObject {
                 return
             }
             do {
-                try await client.stream(psychicID: p.id, userName: name, sign: sign, turns: history, memory: memory) { [weak self] delta in
+                try await client.stream(psychicID: p.id, userName: name, sign: sign, turns: history, memory: memory,
+                                        mood: Daily.mood(for: p.id)) { [weak self] delta in
                     self?.update(p.id, replyID) { $0.text += delta }
                 }
                 serverOnline = true

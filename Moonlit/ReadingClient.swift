@@ -18,6 +18,7 @@ struct ReadingClient {
         let sign: String?
         let messages: [Turn]
         let memory: [String]
+        let mood: String?
     }
 
     struct ServerError: LocalizedError {
@@ -35,7 +36,7 @@ struct ReadingClient {
         return (response as? HTTPURLResponse)?.statusCode == 200
     }
 
-    func stream(psychicID: String, userName: String, sign: String?, turns: [Turn], memory: [String] = [],
+    func stream(psychicID: String, userName: String, sign: String?, turns: [Turn], memory: [String] = [], mood: String? = nil,
                 onText: @escaping @MainActor (String) -> Void) async throws {
         var request = URLRequest(url: baseURL.appendingPathComponent("v1/reading"))
         request.httpMethod = "POST"
@@ -43,7 +44,7 @@ struct ReadingClient {
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.setValue(deviceID, forHTTPHeaderField: "x-device-id")
         if !Self.appKey.isEmpty { request.setValue(Self.appKey, forHTTPHeaderField: "x-moonlit-key") }
-        request.httpBody = try JSONEncoder().encode(Body(psychicId: psychicID, userName: userName, sign: sign, messages: turns, memory: memory))
+        request.httpBody = try JSONEncoder().encode(Body(psychicId: psychicID, userName: userName, sign: sign, messages: turns, memory: memory, mood: mood))
 
         let bytes: URLSession.AsyncBytes
         let response: URLResponse

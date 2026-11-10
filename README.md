@@ -59,12 +59,24 @@ Each psychic remembers your earlier visits with them.
 - Everything is stored on the phone (UserDefaults). The server keeps nothing between requests.
 - Debug builds have **Settings → Debug: pretend a day has passed** for testing.
 
+### Daily: card of the day, moods and morning messages
+Everything daily is worked out on the phone from the date (`Moonlit/Daily.swift`), so it needs no server and stays the same all day.
+
+- **Your psychic**: picked in onboarding from your goal, and changeable in **Settings → Daily**. They read your card of the day and send your morning messages.
+- **Card of the day**: one card per day per install, shown on the home screen. Tap to turn it over and your psychic reads it in their voice. **Ask … about it** opens their chat with the card as context. Turning it over on consecutive days builds a 🔥 streak; missing a day resets it.
+- **Moods**: each psychic has a mood that changes daily ("Mercury retrograde. Calendar is chaos"). It's shown under their name on the home screen and sent to the server, so it colours that day's replies.
+- **Morning messages**: a home-screen card leads to a screen that explains the messages and previews tomorrow's real one, before iOS asks for notification permission. Once you allow it, the next 7 days of messages are scheduled locally at 9:00 (`Moonlit/MorningMessages.swift`); the queue is topped up whenever the app opens. Tapping a message opens your psychic's chat about that day's card. No push server or certificates are needed.
+- Debug builds have **Settings → Debug: send a morning message in 5 seconds**.
+
+### How the app talks about AI
+Screens say "For entertainment only" without labelling the psychics as AI, for a smoother experience. The full disclosure stays in the Settings footer. The server tells each psychic never to raise it unprompted, but to answer honestly if a user sincerely asks whether they're a real person, and to step out of character if someone seems to be in crisis.
+
 ## The server (`server/`)
 
 | Endpoint | What it does |
 | --- | --- |
 | `GET /health` | Returns `{ ok: true, model }` |
-| `POST /v1/reading` | Takes `{ psychicId, userName, sign, messages, memory? }` and streams newline-delimited JSON: `{"type":"text","text":…}` pieces, then `{"type":"done"}` or `{"type":"error","code","message"}` |
+| `POST /v1/reading` | Takes `{ psychicId, userName, sign, messages, memory?, mood? }` and streams newline-delimited JSON: `{"type":"text","text":…}` pieces, then `{"type":"done"}` or `{"type":"error","code","message"}` |
 
 - The psychics' instructions live in `server/src/psychics.ts`. The app sends only the chat, so it can't be used as a free general-purpose Claude proxy.
 - `memory` is an optional list of short notes about earlier visits (at most 10, 200 characters each). It's labelled as the user's own words in the instructions, so it can't override the rules.
@@ -95,6 +107,9 @@ The server runs on any Node 22.18+ host with `npm start`; Railway, Render and Fl
 | --- | --- |
 | `Moonlit/Models.swift` | The five psychics (bio, greeting, demo lines), star signs and the tarot deck |
 | `Moonlit/AppState.swift` | Navigation, saved readings (UserDefaults), visits and memory notes, and turning the chat into turns for the server |
+| `Moonlit/Daily.swift` | Card of the day, daily moods and morning-message text |
+| `Moonlit/MorningMessages.swift` | Schedules local morning notifications and handles taps on them |
+| `Moonlit/Views/DailyViews.swift` | Card-of-the-day tile and the morning-message explainer |
 | `Moonlit/Rituals.swift` | Each psychic's ritual (moon phase, forecast, tea leaves, crystal ball, playing card) and welcome-back line |
 | `Moonlit/Views/Onboarding/` | Onboarding flow, three-card draw, share image and placeholder paywall |
 | `Moonlit/ReadingClient.swift` | Calls the server and reads the streamed reply |

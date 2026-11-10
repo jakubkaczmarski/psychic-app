@@ -5,6 +5,7 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var confirmClear = false
     @State private var checking = false
+    @State private var notificationsBlocked = false
 
     private var status: (icon: String, color: Color, text: String) {
         if !app.isLive { return ("wand.and.stars", Theme.gold, "Demo mode: replies are pre-written") }
@@ -47,7 +48,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Reading server")
                 } footer: {
-                    Text("Readings come from the Moonlit server, which holds the Claude API key. Leave the address empty for demo mode.")
+                    Text("Readings come from the Moonlit server. Leave the address empty for demo mode.")
                 }
 
                 Section("You") {
@@ -56,6 +57,27 @@ struct SettingsView: View {
                         Text("Not set").tag("")
                         ForEach(Catalog.signs) { Text($0.name).tag($0.name) }
                     }
+                }
+
+                Section {
+                    Picker("Your psychic", selection: $app.matchedPsychicID) {
+                        ForEach(Catalog.psychics) { Text($0.name).tag($0.id) }
+                    }
+                    Toggle("Morning messages", isOn: Binding(
+                        get: { app.morningMessagesOn },
+                        set: { on in
+                            if on { Task { if !(await app.enableMorningMessages()) { notificationsBlocked = true } } }
+                            else { app.morningMessagesOn = false }
+                        }))
+                    #if DEBUG
+                    Button("Debug: send a morning message in 5 seconds") { app.sendTestMorningMessage() }
+                    #endif
+                } header: {
+                    Text("Daily")
+                } footer: {
+                    Text(notificationsBlocked
+                         ? "Notifications are turned off for Moonlit. You can allow them in the iPhone Settings app."
+                         : "Your psychic reads your card of the day and sends a message at \(MorningMessages.hour):00.")
                 }
 
                 Section {

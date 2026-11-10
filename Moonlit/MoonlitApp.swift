@@ -2,7 +2,9 @@ import SwiftUI
 
 @main
 struct MoonlitApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var app = AppState()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
@@ -10,6 +12,14 @@ struct MoonlitApp: App {
                 .environmentObject(app)
                 .preferredColorScheme(.dark)
                 .tint(Theme.gold)
+                // Tapping a morning message opens your psychic with today's card.
+                .onReceive(NotificationCenter.default.publisher(for: .openDailyCard)) { _ in
+                    app.askAboutDailyCard()
+                }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            // Keep a week of morning messages queued up.
+            if phase == .active { app.refreshMorningMessages() }
         }
     }
 }

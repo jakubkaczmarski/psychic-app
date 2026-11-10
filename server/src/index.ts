@@ -59,6 +59,8 @@ interface ReadingRequest {
   messages: Turn[];
   /** Short notes about earlier readings with this psychic, written by the app. */
   memory: string[];
+  /** Today's mood for this psychic, chosen by the app. */
+  mood: string | null;
 }
 
 const MAX_MEMORY = 10;
@@ -96,7 +98,9 @@ function parseReading(body: unknown): ReadingRequest | string {
         .map((m) => m.replace(/\s+/g, " ").trim().slice(0, MAX_MEMORY_CHARS))
     : [];
 
-  return { psychicId: b.psychicId, userName, sign, messages, memory };
+  const mood = typeof b.mood === "string" && b.mood.trim() ? b.mood.replace(/\s+/g, " ").trim().slice(0, 80) : null;
+
+  return { psychicId: b.psychicId, userName, sign, messages, memory, mood };
 }
 
 async function readJSON(req: http.IncomingMessage): Promise<unknown> {
@@ -164,7 +168,7 @@ async function handleReading(req: http.IncomingMessage, res: http.ServerResponse
   const stream = client.beta.messages.stream({
     model: MODEL,
     max_tokens: 2000,
-    system: systemPrompt(persona, parsed.userName, parsed.sign, parsed.memory),
+    system: systemPrompt(persona, parsed.userName, parsed.sign, parsed.memory, parsed.mood),
     messages: parsed.messages,
     output_config: { effort: "low" },
     // If Claude declines, the API re-runs the request on a fallback model automatically.

@@ -23,7 +23,7 @@ struct WelcomeStep: View {
                             .font(Theme.display(38, .medium))
                             .foregroundStyle(Theme.textBright)
                             .fixedSize(horizontal: false, vertical: true)
-                        Text("Five AI psychics, one for every kind of question. Your first reading takes a minute.")
+                        Text("Five psychics, one for every kind of question. Your first reading takes a minute.")
                             .font(.system(size: 16))
                             .foregroundStyle(Theme.muted)
                             .lineSpacing(3)
@@ -38,7 +38,7 @@ struct WelcomeStep: View {
             OnboardingFooter {
                 Button("Get my first reading", action: onStart)
                     .buttonStyle(GoldButtonStyle())
-                Text("For entertainment. The psychics are AI characters.")
+                Text("For entertainment only.")
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.faint)
                     .frame(minHeight: 30)

@@ -6,6 +6,8 @@ struct MoonlitApp: App {
     @StateObject private var app = AppState()
     @Environment(\.scenePhase) private var scenePhase
 
+    init() { Analytics.start() }
+
     var body: some Scene {
         WindowGroup {
             RootView()
@@ -19,7 +21,10 @@ struct MoonlitApp: App {
         }
         .onChange(of: scenePhase) { _, phase in
             // Keep a week of morning messages queued up.
-            if phase == .active { app.refreshMorningMessages() }
+            if phase == .active {
+                app.refreshMorningMessages()
+                Analytics.appBecameActive()
+            }
         }
     }
 }

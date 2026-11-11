@@ -155,7 +155,7 @@ enum Catalog {
             cardIntro: "Let me lay one card down for you…",
             love: ["The queen of hearts sits right beside you. Someone has warm eyes for you, but they are shy. Make it easy for them.", "Someone talks sweet but acts slow. Watch what they do, not what they say."],
             work: ["Diamonds all over this spread. Money is moving toward you, slowly. Do not spend it before it arrives.", "The ten of clubs: hard work, but it pays. Ask an older person you trust for advice this week."],
-            general: ["Call your mother, or whoever was a mother to you. That conversation will untangle something.", "Luck is on its way, but luck likes a tidy house. Finish one small thing today and make room for it."]
+            general: ["There's a message you've been meaning to send. Send it today. That conversation will untangle something.", "Luck is on its way, but luck likes a tidy house. Finish one small thing today and make room for it."]
         ),
     ]
 

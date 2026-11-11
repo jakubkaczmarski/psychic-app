@@ -8,6 +8,8 @@ struct OnboardingGoal: Identifiable, Hashable {
     let label: String
     /// Used in sentences: "What do they say about {topic}?"
     let topic: String
+    /// The same topic in the second person, for the paywall: "your love life".
+    let yourTopic: String
     /// The psychic best suited to this goal.
     let psychicID: String
     /// Why that psychic was picked, shown on the result screen.
@@ -22,17 +24,17 @@ struct OnboardingPain: Identifiable, Hashable {
 
 enum OnboardingCatalog {
     static let goals: [OnboardingGoal] = [
-        .init(id: "love", emoji: "💘", label: "Love & relationships", topic: "my love life", psychicID: "selene",
+        .init(id: "love", emoji: "💘", label: "Love & relationships", topic: "my love life", yourTopic: "your love life", psychicID: "selene",
               matchReason: "Matters of the heart are Selene's whole world. She reads the moon, and your texts."),
-        .init(id: "work", emoji: "💼", label: "Work & money", topic: "my work life", psychicID: "kaz",
+        .init(id: "work", emoji: "💼", label: "Work & money", topic: "my work life", yourTopic: "your work life", psychicID: "kaz",
               matchReason: "Kaz reads careers like a quarterly report. Blunt, fast, and weirdly useful."),
-        .init(id: "decision", emoji: "🔀", label: "A big decision", topic: "the decision I'm facing", psychicID: "ivy",
+        .init(id: "decision", emoji: "🔀", label: "A big decision", topic: "the decision I'm facing", yourTopic: "your big decision", psychicID: "ivy",
               matchReason: "Grandma Ivy has talked half her town through big choices, one cup of tea at a time."),
-        .init(id: "family", emoji: "🏡", label: "Family & friends", topic: "the people close to me", psychicID: "mirela",
+        .init(id: "family", emoji: "🏡", label: "Family & friends", topic: "the people close to me", yourTopic: "the people close to you", psychicID: "mirela",
               matchReason: "Mirela reads family the way she reads cards: with love and total honesty."),
-        .init(id: "self", emoji: "🌱", label: "Figuring out what I want", topic: "where I'm headed", psychicID: "selene",
+        .init(id: "self", emoji: "🌱", label: "Figuring out what I want", topic: "where I'm headed", yourTopic: "where you're headed", psychicID: "selene",
               matchReason: "Selene believes every heart has a tide. She'll help you find which way yours is pulling."),
-        .init(id: "fun", emoji: "✨", label: "Just curious, for fun", topic: "the week ahead", psychicID: "zephyr",
+        .init(id: "fun", emoji: "✨", label: "Just curious, for fun", topic: "the week ahead", yourTopic: "your week ahead", psychicID: "zephyr",
               matchReason: "Zephyr sees everything and explains nothing. The most fun you'll have with a crystal ball."),
     ]
 
@@ -50,7 +52,7 @@ enum OnboardingCatalog {
 
 // MARK: - Flow
 
-private enum OnboardingStep: Int {
+private enum OnboardingStep: Int, CaseIterable {
     case welcome, goal, pains, you, processing, draw, result, paywall
 
     /// Steps that show the progress bar, in order.
@@ -85,6 +87,15 @@ struct OnboardingView: View {
             .clipped()
         }
         .background(Theme.bg.ignoresSafeArea())
+        .onAppear { trackStep(step) }
+        .onChange(of: step) { _, new in trackStep(new) }
+    }
+
+    /// One event per screen, numbered so the funnel sorts in order (`2_pains`).
+    private func trackStep(_ s: OnboardingStep) {
+        var params = ["step": "\(s.rawValue)_\(s)", "goal": goalID ?? "none"]
+        if s == .paywall { params["psychic"] = match.id }
+        Analytics.track(.onboardingStep, params)
     }
 
     @ViewBuilder private var screen: some View {
@@ -107,7 +118,7 @@ struct OnboardingView: View {
         case .result:
             ResultStep(spread: spread, goal: goal, match: match, name: firstName, sign: app.sign) { go(.paywall) }
         case .paywall:
-            PaywallView(psychic: match) { finish() }
+            PaywallView(psychic: match, goal: goal, spread: spread, name: firstName, source: "onboarding") { finish() }
         }
     }
 

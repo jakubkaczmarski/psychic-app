@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// Placeholder paywall shown at the end of onboarding.
+/// Paywall shown at the end of onboarding, personalised with the user's psychic, goal and spread.
+/// The purchase itself is still a placeholder.
 ///
 /// TODO: Connect StoreKit 2 before release:
 ///   1. Create the products in App Store Connect (IDs below are placeholders).
@@ -11,20 +12,30 @@ import SwiftUI
 /// Until then every button simply continues into the app; nothing is charged.
 struct PaywallView: View {
     let psychic: Psychic
+    var goal: OnboardingGoal? = nil
+    /// The three cards drawn in onboarding, shown as "your reading so far".
+    var spread: [TarotCard] = []
+    var name: String = ""
+    /// Where the paywall was opened from, for analytics.
+    var source: String = "onboarding"
     let onFinish: () -> Void
 
     enum Plan: String { case yearly, weekly }
     @State private var plan: Plan = .yearly
+    @State private var shownAt = Date()
 
     // TODO: Replace with real products and prices from StoreKit.
     private static let yearlyProductID = "com.example.moonlit.plus.yearly"
     private static let weeklyProductID = "com.example.moonlit.plus.weekly"
 
+    private var topic: String { goal?.yourTopic ?? "you" }
+    private var others: [Psychic] { Catalog.psychics.filter { $0.id != psychic.id } }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack {
                 Spacer()
-                Button(action: onFinish) {
+                Button { dismiss("close") } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(Theme.muted)
@@ -35,30 +46,16 @@ struct PaywallView: View {
             .padding(.horizontal, 8)
 
             ScrollView {
-                VStack(spacing: 24) {
-                    VStack(spacing: 14) {
-                        HStack(spacing: -12) {
-                            ForEach(Catalog.psychics) { p in
-                                AvatarView(psychic: p, size: p.id == psychic.id ? 64 : 48)
-                                    .overlay(Circle().stroke(Theme.bg, lineWidth: 3))
-                                    .zIndex(p.id == psychic.id ? 1 : 0)
-                            }
-                        }
-                        Text("Your psychic circle, whenever you need it.")
-                            .font(Theme.display(30, .medium))
-                            .foregroundStyle(Theme.textBright)
-                            .multilineTextAlignment(.center)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
+                VStack(spacing: 22) {
+                    header
+                    if spread.count == 3 { spreadRecap }
                     VStack(alignment: .leading, spacing: 12) {
-                        benefit("Unlimited questions with all five psychics")
-                        benefit("Tarot pulls whenever you ask for one")
-                        benefit("Every reading saved, so you can look back")
+                        benefit("Ask \(psychic.short) about \(topic), any time, day or night")
+                        benefit(Self.ritualBenefit[psychic.id] ?? "Unlimited rituals and tarot pulls")
+                        benefit("Your card of the day and morning messages from \(psychic.short)")
+                        othersRow
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-
-                    review
 
                     VStack(spacing: 10) {
                         planRow(.yearly, title: "Yearly", detail: "3 days free, then $29.99/year", badge: "Best value")
@@ -74,49 +71,139 @@ struct PaywallView: View {
                     .buttonStyle(GoldButtonStyle())
                 HStack(spacing: 18) {
                     Button("Restore purchases", action: restore)
-                    Button("Not now", action: onFinish)
+                    Button("Not now") { dismiss("notNow") }
                 }
                 .font(.system(size: 14))
                 .foregroundStyle(Theme.muted)
                 .frame(minHeight: 40)
-                Text("Cancel anytime. For entertainment only.")
+                Text(plan == .yearly ? "Free for 3 days, then $29.99/year. Cancel anytime." : "Cancel anytime. For entertainment only.")
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.faint)
             }
         }
         .background(Theme.bg.ignoresSafeArea())
-    }
-
-    private func benefit(_ text: String) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.gold)
-            Text(text).font(.system(size: 16)).foregroundStyle(Theme.text)
+        .onAppear {
+            shownAt = Date()
+            Analytics.track(.paywallShown, analyticsParams)
         }
     }
 
-    // TODO: Placeholder review. Replace with a real App Store review once you have one.
-    private var review: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 2) {
-                ForEach(0..<5, id: \.self) { _ in Image(systemName: "star.fill") }
+    // MARK: Personalised content
+
+    /// The matched psychic, a line in their voice about the user's goal, and the headline.
+    private var header: some View {
+        VStack(spacing: 16) {
+            AvatarView(psychic: psychic, size: 92)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(psychic.name)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color(hex: psychic.ringHex).opacity(0.9))
+                Text(pitch)
+                    .font(.system(size: 16))
+                    .foregroundStyle(Theme.text)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .font(.system(size: 13))
-            .foregroundStyle(Theme.gold)
-            .accessibilityLabel("5 stars")
-            Text("“Grandma Ivy told me to stop waiting for a sign. Weirdly, that was the sign.”")
-                .font(Theme.display(16))
-                .italic()
-                .foregroundStyle(Theme.text)
-            Text("Maya, Libra").font(.system(size: 13)).foregroundStyle(Theme.muted)
+            .padding(.horizontal, 16).padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+
+            Text(name.isEmpty ? "Keep \(psychic.short) on call" : "\(name), keep \(psychic.short) on call")
+                .font(Theme.display(30, .medium))
+                .foregroundStyle(Theme.textBright)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// What the psychic says on the paywall, in their own texting voice.
+    private var pitch: String {
+        let lines: [String: String] = [
+            "selene": "Darling, I've barely begun with {topic}. Stay a while.",
+            "kaz": "That was the warm-up. The real read on {topic} starts now.",
+            "ivy": "Oh, love, that was only the first cup. There's plenty more to say about {topic}.",
+            "zephyr": "ok the ball is NOT done with {topic}. it's still glowing. stay",
+            "mirela": "One spread tells me a little, my dear. Come back often and I'll tell you the rest about {topic}.",
+        ]
+        return (lines[psychic.id] ?? lines["selene"]!).replacingOccurrences(of: "{topic}", with: topic)
+    }
+
+    private static let ritualBenefit: [String: String] = [
+        "selene": "Moon readings whenever your heart needs one",
+        "kaz": "Fresh love, money and energy forecasts on demand",
+        "ivy": "Tea-leaf readings, with the kettle always on",
+        "zephyr": "Unlimited crystal ball visions (pigeons not guaranteed)",
+        "mirela": "A new card from Mirela's deck every time you ask",
+    ]
+
+    /// The three cards the user just drew, so the paywall is about their reading.
+    private var spreadRecap: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            EyebrowText("Your spread")
+            HStack(alignment: .top, spacing: 12) {
+                ForEach(Array(zip(OnboardingCatalog.positions, spread)), id: \.0) { position, card in
+                    VStack(spacing: 6) {
+                        TarotTile(card: card, revealed: true, compact: true)
+                            .frame(width: 52)
+                        Text(position).font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.muted)
+                        Text(card.name)
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.text)
+                            .multilineTextAlignment(.center)
+                            .lineLimit(2)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+            }
+            Text("Up next: \(psychic.short) reads all three for you.")
+                .font(.system(size: 14))
+                .foregroundStyle(Theme.muted)
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .cardSurface()
     }
 
+    private var othersRow: some View {
+        HStack(spacing: 12) {
+            HStack(spacing: -10) {
+                ForEach(others) { p in
+                    AvatarView(psychic: p, size: 30).overlay(Circle().stroke(Theme.bg, lineWidth: 2))
+                }
+            }
+            Text("Plus \(others.map(\.short).dropLast().joined(separator: ", ")) and \(others.last?.short ?? "")")
+                .font(.system(size: 16))
+                .foregroundStyle(Theme.text)
+        }
+    }
+
+    private func benefit(_ text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.gold)
+            Text(text).font(.system(size: 16)).foregroundStyle(Theme.text)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    // MARK: Analytics
+
+    private var analyticsParams: [String: String] {
+        ["source": source, "psychic": psychic.id, "goal": goal?.id ?? "none", "plan": plan.rawValue]
+    }
+
+    private func dismiss(_ how: String) {
+        var params = analyticsParams
+        params["how"] = how
+        params["seconds"] = String(Int(Date().timeIntervalSince(shownAt)))
+        Analytics.track(.paywallDismissed, params)
+        onFinish()
+    }
+
     private func planRow(_ p: Plan, title: String, detail: String, badge: String?) -> some View {
         let selected = plan == p
-        return Button { plan = p } label: {
+        return Button {
+            plan = p
+            Analytics.track(.paywallPlanSelected, analyticsParams)
+        } label: {
             HStack(spacing: 14) {
                 Image(systemName: selected ? "largecircle.fill.circle" : "circle")
                     .font(.system(size: 22))
@@ -146,11 +233,14 @@ struct PaywallView: View {
     }
 
     private func startTrial() {
-        // TODO: Purchase `plan == .yearly ? Self.yearlyProductID : Self.weeklyProductID` with StoreKit 2.
+        Analytics.track(.paywallCTATapped, analyticsParams)
+        // TODO: Purchase `plan == .yearly ? Self.yearlyProductID : Self.weeklyProductID` with StoreKit 2,
+        // then send `.trialStarted` (yearly) or `.purchased` (weekly) with `analyticsParams`.
         onFinish()
     }
 
     private func restore() {
+        Analytics.track(.paywallRestoreTapped, analyticsParams)
         // TODO: `try await AppStore.sync()`, then re-check entitlements.
         onFinish()
     }

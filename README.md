@@ -34,9 +34,39 @@ A questionnaire-style first run (`Moonlit/Views/Onboarding/`):
 5. A short "Reading your stars…" moment
 6. **Try it:** tap 3 face-down tarot cards for past, present and future
 7. The spread, a matched psychic (picked from the goal) and a shareable image
-8. A placeholder paywall (closable; StoreKit is still a TODO in `PaywallView.swift`)
+8. A paywall personalised for each user (closable; the purchase itself is still a StoreKit TODO in `PaywallView.swift`)
 
 Finishing opens the matched psychic, who reads the spread live using the goal and pain points as context. Settings has **Replay onboarding**.
+
+### Personalised paywall
+The paywall at the end of onboarding is built from the user's own answers instead of a generic feature list:
+
+- Their matched psychic's photo, with a line in that psychic's voice about their goal ("Darling, I've barely begun with your love life. Stay a while.").
+- A headline with their name: "Alex, keep Selene on call".
+- The three cards they just drew, with "Up next: Selene reads all three for you."
+- Benefits that name their psychic, their topic and that psychic's ritual, then the other four psychics.
+- The price under the button ("Free for 3 days, then $29.99/year. Cancel anytime.").
+
+The second-person topic for each goal is `yourTopic` in `OnboardingCatalog.goals`; the voice lines and ritual benefits are in `PaywallView.swift`. The made-up review was removed: Apple rejects apps that show invented reviews.
+
+### Analytics
+Funnel events go to [TelemetryDeck](https://telemetrydeck.com) (`Moonlit/Analytics.swift`), which collects no personal data, so no consent banner is needed. **Setup:** create an app in TelemetryDeck and paste its App ID into `Analytics.appID`. Until then nothing is sent, and debug builds print each event to the Xcode console (`📊 Paywall.shown …`). Debug builds send in test mode, so they don't mix with real users.
+
+| Event | When | Parameters |
+| --- | --- | --- |
+| `Onboarding.stepViewed` | Each onboarding screen | `step` (`0_welcome` … `7_paywall`), `goal` |
+| `Onboarding.completed` | Leaving onboarding | `goal`, `psychic`, `painCount` |
+| `Paywall.shown` / `planSelected` / `ctaTapped` / `restoreTapped` | Paywall actions | `source`, `psychic`, `goal`, `plan` |
+| `Paywall.dismissed` | Close or "Not now" | the above, plus `how` and `seconds` |
+| `Purchase.trialStarted` / `Purchase.completed` | Defined, not sent yet: add them when StoreKit is wired up | |
+| `Chat.firstMessageSent` | The first message ever | as `Chat.messageSent` |
+| `Chat.messageSent` | Every message | `psychic`, `messageInVisit`, `ritual`, `live`, `daysSinceInstall` |
+| `Chat.visitStarted` | New thread or a welcome back after 6 h | `psychic`, `returning` |
+| `App.activeDay` | Once per calendar day the app is opened | `daysSinceInstall`, `week` |
+| `Daily.cardRevealed` | Turning the card of the day | `streak` |
+| `Daily.morningMessagesAnswered` | The notification permission answer | `granted` |
+
+Day 1 and day 7 retention are the share of installs that send `App.activeDay` with `daysSinceInstall` 1 and 7. Messages per visit come from the highest `messageInVisit`. Never add names, questions or chat text as parameters.
 
 ### Five distinct psychics
 Each psychic has a character bible in `server/src/psychics.ts`: backstory, voice, reply length, catchphrases, things they never say, quirks, opinions of the other four, and example replies. Change a personality there; the app doesn't need an update.
@@ -114,11 +144,12 @@ The server runs on any Node 22.18+ host with `npm start`; Railway, Render and Fl
 | --- | --- |
 | `Moonlit/Models.swift` | The five psychics (bio, greeting, demo lines), star signs and the tarot deck |
 | `Moonlit/AppState.swift` | Navigation, saved readings (UserDefaults), visits and memory notes, and turning the chat into turns for the server |
+| `Moonlit/Analytics.swift` | Funnel events sent to TelemetryDeck |
 | `Moonlit/Daily.swift` | Card of the day, daily moods and morning-message text |
 | `Moonlit/MorningMessages.swift` | Schedules local morning notifications and handles taps on them |
 | `Moonlit/Views/DailyViews.swift` | Card-of-the-day tile and the morning-message explainer |
 | `Moonlit/Rituals.swift` | Each psychic's ritual (moon phase, forecast, tea leaves, crystal ball, playing card) and welcome-back line |
-| `Moonlit/Views/Onboarding/` | Onboarding flow, three-card draw, share image and placeholder paywall |
+| `Moonlit/Views/Onboarding/` | Onboarding flow, three-card draw, share image and personalised paywall |
 | `Moonlit/ReadingClient.swift` | Calls the server and reads the streamed reply |
 | `Moonlit/Views/` | Welcome, Home, Profile, Chat, Readings and Settings screens |
 | `Moonlit/Resources/` | Psychic portraits |

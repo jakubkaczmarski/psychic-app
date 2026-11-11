@@ -107,6 +107,7 @@ final class AppState: ObservableObject {
         guard !revealedToday else { return }
         dailyStreakCount = dailyRevealDay == Daily.dayKey(daysFrom: Date(), -1) ? dailyStreakCount + 1 : 1
         dailyRevealDay = Daily.dayKey()
+        Analytics.track(.dailyCardRevealed, ["streak": String(dailyStreakCount)])
     }
 
     /// Opens your psychic's chat and asks about today's card.
@@ -124,6 +125,7 @@ final class AppState: ObservableObject {
         let granted = await MorningMessages.requestPermission()
         morningPromptDismissed = true
         morningMessagesOn = granted
+        Analytics.track(.morningMessagesAnswered, ["granted": String(granted)])
         return granted
     }
 
@@ -186,6 +188,7 @@ final class AppState: ObservableObject {
         defaults.set(goal, forKey: "onboardingGoal")
         defaults.set(pains, forKey: "onboardingPains")
         matchedPsychicID = match.id
+        Analytics.track(.onboardingCompleted, ["goal": goal ?? "none", "psychic": match.id, "painCount": String(pains.count)])
         path = []
         onboarded = true
         if let question { openChat(match, asking: question, note: note) }
@@ -203,6 +206,7 @@ final class AppState: ObservableObject {
     func ensureThread(_ p: Psychic) {
         guard let thread = threads[p.id], !thread.isEmpty else {
             threads[p.id] = [ChatMessage(role: .psychic, text: greeting(for: p))]
+            Analytics.track(.visitStarted, ["psychic": p.id, "returning": "false"])
             return
         }
         // Messages saved before dates existed count as old.
@@ -212,6 +216,7 @@ final class AppState: ObservableObject {
             let text = Rituals.style(for: p.id).welcomeBack
                 .replacingOccurrences(of: "{name}", with: name.isEmpty ? p.defaultName.capitalized : name)
             threads[p.id, default: []].append(ChatMessage(role: .psychic, text: text, startsVisit: true))
+            Analytics.track(.visitStarted, ["psychic": p.id, "returning": "true"])
         }
     }
 
@@ -229,11 +234,26 @@ final class AppState: ObservableObject {
             user.apiNote = result.note
         }
         threads[p.id, default: []].append(user)
+        trackMessage(to: p, ritual: performed != nil)
         if let performed {
             threads[p.id, default: []].append(ChatMessage(role: .psychic, text: Rituals.style(for: p.id).intro))
             threads[p.id, default: []].append(ChatMessage(role: .ritual, text: performed.detail, ritual: performed))
         }
         respond(as: p, to: text, ritual: performed)
+    }
+
+    /// Counts the message within the current visit, so analytics shows messages per visit.
+    private func trackMessage(to p: Psychic, ritual: Bool) {
+        let thread = threads[p.id] ?? []
+        let visitStart = thread.lastIndex { $0.startsVisit == true } ?? 0
+        let inVisit = thread[visitStart...].filter { $0.role == .user }.count
+        let params = ["psychic": p.id, "messageInVisit": String(inVisit), "ritual": String(ritual),
+                      "live": String(isLive), "daysSinceInstall": String(Analytics.daysSinceInstall)]
+        if !defaults.bool(forKey: "sentFirstMessage") {
+            defaults.set(true, forKey: "sentFirstMessage")
+            Analytics.track(.firstMessageSent, params)
+        }
+        Analytics.track(.messageSent, params)
     }
 
     func performRitual(with p: Psychic) {

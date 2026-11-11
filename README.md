@@ -111,6 +111,17 @@ Everything daily is worked out on the phone from the date (`Moonlit/Daily.swift`
 - **Morning messages**: a home-screen card leads to a screen that explains the messages and previews tomorrow's real one, before iOS asks for notification permission. Once you allow it, the next 7 days of messages are scheduled locally at 9:00 (`Moonlit/MorningMessages.swift`); the queue is topped up whenever the app opens. Tapping a message opens your psychic's chat about that day's card. No push server or certificates are needed.
 - Debug builds have **Settings → Debug: send a morning message in 5 seconds**.
 
+### Cosmic view
+A 3D view of the solar system for any date (`Moonlit/Cosmos/`), opened from the **Cosmic view** card on the home screen. The card teases today's sky ("Mercury and Venus are retrograde").
+
+- **Real positions**: `Ephemeris.swift` works out where every planet is from NASA JPL's approximate orbital elements (valid 1800–2050, well under a degree off), and the Moon from a short series. It gives each body's sign, degree, and whether it's retrograde. Checked against published charts for 1 Jan 2000 and the 8 Apr 2024 eclipse (Sun and Moon both at 19° Aries).
+- **The scene** (`CosmosScene.swift`, SceneKit): the Sun, eight planets on their orbits, the Moon beside Earth, a slowly drifting, twinkling starfield and a zodiac dial around everything. Distances are logarithmic so the inner planets get room; directions are real.
+- **Looks**: every planet has a surface painted in code (`PlanetTextures.swift`, no image files): Mercury's craters, Venus's clouds, Earth's continents and ice caps, Mars's polar caps, Jupiter's bands and Great Red Spot, banded rings with the Cassini gap for Saturn. Planets are matte-shaded with a thin atmosphere rim. The Sun has granulation, limb darkening (white-gold centre, orange edge) and a soft glow; only the Sun blooms.
+- **Moving around**: drag to orbit, pinch to zoom. It opens with a fly-in from deep space.
+- **Picking a planet** (tap it or its chip): the dial turns so that planet's sign is at the top, the sign lights up gold, and a gold beam runs from Earth through the planet to the exact degree. If it's retrograde (or will be soon) the card shows the dates, e.g. "Retrograde 24 Oct – 13 Nov" (worked out from the planet's apparent motion, checked against published 2026–27 dates), and a coral arc on the dial marks the stretch of sky it walks back over. Crossing into a new sign while scrubbing gives a small haptic tap. A card explains it ("Mercury rules how you think and talk. In Scorpio it's intense and private.") and **Ask {psychic} what it means** opens your psychic's chat with the whole sky as context.
+- **Time travel**: drag the ruler to scrub day by day (with a flick), press play to run time at about a month a second, or tap **Today** to glide back.
+- Labels are a 2D overlay pinned to each planet every frame, so they stay the same size at any zoom; a label that would overlap a more important one hides.
+
 ### Texting like a person
 Replies are written and delivered like real texts, not one polished answer.
 
@@ -157,6 +168,7 @@ The server runs on any Node 22.18+ host with `npm start`; Railway, Render and Fl
 | --- | --- |
 | `Moonlit/Models.swift` | The five psychics (bio, greeting, demo lines), star signs and the tarot deck |
 | `Moonlit/AppState.swift` | Navigation, saved readings (UserDefaults), visits and memory notes, and turning the chat into turns for the server |
+| `Moonlit/Cosmos/` | Cosmic view: planet positions (`Ephemeris`), the 3D scene and the screen with the time scrubber |
 | `Moonlit/Analytics.swift` | Funnel events sent to TelemetryDeck |
 | `Moonlit/Daily.swift` | Card of the day, daily moods and morning-message text |
 | `Moonlit/MorningMessages.swift` | Schedules local morning notifications and handles taps on them |

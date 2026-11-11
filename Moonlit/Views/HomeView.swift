@@ -4,6 +4,9 @@ struct HomeView: View {
     @EnvironmentObject var app: AppState
     @State private var showSettings = false
     @State private var showMorningPrimer = false
+    @State private var showCosmos = false
+    /// A question asked from the cosmic view, sent once it has closed.
+    @State private var pendingAsk: (question: String, note: String)?
 
     private var greetLine: String? {
         let name = app.userName.trimmingCharacters(in: .whitespaces)
@@ -36,6 +39,7 @@ struct HomeView: View {
                 }
 
                 DailyCardTile()
+                CosmosTile { showCosmos = true }
                 if !app.morningMessagesOn && !app.morningPromptDismissed {
                     morningPrompt
                 }
@@ -76,6 +80,14 @@ struct HomeView: View {
         .onReceive(NotificationCenter.default.publisher(for: .openDailyCard)) { _ in
             showSettings = false
             showMorningPrimer = false
+        }
+        .fullScreenCover(isPresented: $showCosmos, onDismiss: {
+            if let ask = pendingAsk {
+                pendingAsk = nil
+                app.openChat(app.matchedPsychic, asking: ask.question, note: ask.note)
+            }
+        }) {
+            CosmosView(onAsk: { pendingAsk = ($0, $1) })
         }
         .sheet(isPresented: $showMorningPrimer) {
             MorningMessagesPrimer()
@@ -192,5 +204,66 @@ struct PsychicRow: View {
         .padding(14)
         .cardSurface()
         .contentShape(Rectangle())
+    }
+}
+
+/// Home-screen entry to the cosmic view, with a one-line teaser about today's sky.
+struct CosmosTile: View {
+    let open: () -> Void
+    @State private var twinkle = false
+
+    private var teaser: String {
+        let today = Ephemeris.placements(on: Date())
+        let retro = today.filter(\.retrograde).map(\.body.name)
+        let moon = today.first { $0.body == .moon }?.sign.name ?? ""
+        // Lead with the planets people talk about: Mercury, then Venus, then Mars.
+        let personal = retro.filter { ["Mercury", "Venus", "Mars"].contains($0) }
+        switch (personal.count, retro.count) {
+        case (_, 0): return "No planets retrograde · Moon in \(moon)"
+        case (0, _): return "Moon in \(moon) · \(retro.count) slow planets retrograde"
+        case (1, 1): return "\(personal[0]) is retrograde · Moon in \(moon)"
+        case (1, _): return "\(personal[0]) is retrograde, plus \(retro.count - 1) more"
+        default: return "\(personal[0]) and \(personal[1]) are retrograde"
+        }
+    }
+
+    var body: some View {
+        Button(action: open) {
+            HStack(spacing: 14) {
+                ZStack {
+                    Circle().fill(RadialGradient(colors: [Color(hex: 0xFFD27A), Color(hex: 0xE89A4A).opacity(0)],
+                                                 center: .center, startRadius: 2, endRadius: 22))
+                        .frame(width: 44, height: 44)
+                        .scaleEffect(twinkle ? 1.12 : 0.95)
+                    ForEach(0..<3) { i in
+                        Circle()
+                            .stroke(Theme.lilac.opacity(0.25), lineWidth: 1)
+                            .frame(width: CGFloat(30 + i * 16), height: CGFloat(30 + i * 16))
+                    }
+                    Circle().fill(Color(hex: 0x5FA8E8)).frame(width: 6, height: 6)
+                        .offset(x: 23).rotationEffect(.degrees(twinkle ? 40 : -20))
+                    Circle().fill(Color(hex: 0xE0704A)).frame(width: 5, height: 5)
+                        .offset(x: -31).rotationEffect(.degrees(twinkle ? -25 : 10))
+                }
+                .frame(width: 64, height: 64)
+                VStack(alignment: .leading, spacing: 3) {
+                    EyebrowText("Cosmic view")
+                    Text("See where the planets are")
+                        .font(Theme.display(19))
+                        .foregroundStyle(Theme.textBright)
+                    Text(teaser)
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.muted)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").foregroundStyle(Theme.faint)
+            }
+            .padding(16)
+            .cardSurface(strong: true)
+        }
+        .buttonStyle(.plain)
+        .onAppear {
+            withAnimation(.easeInOut(duration: 3).repeatForever(autoreverses: true)) { twinkle = true }
+        }
     }
 }

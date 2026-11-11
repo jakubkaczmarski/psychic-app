@@ -11,10 +11,13 @@ import SwiftUI
 ///   5. Decide what Moonlit+ unlocks (for example, raise the server's daily limit for subscribers).
 /// Until then every button simply continues into the app; nothing is charged.
 struct PaywallView: View {
+    @EnvironmentObject var app: AppState
     let psychic: Psychic
     var goal: OnboardingGoal? = nil
     /// The three cards drawn in onboarding, shown as "your reading so far".
     var spread: [TarotCard] = []
+    /// Opened from a locked reply: the header talks about that reply.
+    var lockedReply = false
     var name: String = ""
     /// Where the paywall was opened from, for analytics.
     var source: String = "onboarding"
@@ -28,7 +31,13 @@ struct PaywallView: View {
     private static let yearlyProductID = "com.example.moonlit.plus.yearly"
     private static let weeklyProductID = "com.example.moonlit.plus.weekly"
 
-    private var topic: String { goal?.yourTopic ?? "you" }
+    /// The user's goal when it belongs to this psychic, otherwise what the psychic is known for.
+    private var topic: String {
+        if let goal, goal.psychicID == psychic.id { return goal.yourTopic }
+        let fallback = ["selene": "your love life", "kaz": "your career", "ivy": "your life choices",
+                        "zephyr": "your week ahead", "mirela": "your family"]
+        return fallback[psychic.id] ?? "you"
+    }
     private var others: [Psychic] { Catalog.psychics.filter { $0.id != psychic.id } }
 
     var body: some View {
@@ -107,7 +116,7 @@ struct PaywallView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Theme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
 
-            Text(name.isEmpty ? "Keep \(psychic.short) on call" : "\(name), keep \(psychic.short) on call")
+            Text(headline)
                 .font(Theme.display(30, .medium))
                 .foregroundStyle(Theme.textBright)
                 .multilineTextAlignment(.center)
@@ -115,8 +124,23 @@ struct PaywallView: View {
         }
     }
 
+    private var headline: String {
+        if lockedReply { return "Read \(psychic.short)'s reply" }
+        return name.isEmpty ? "Keep \(psychic.short) on call" : "\(name), keep \(psychic.short) on call"
+    }
+
     /// What the psychic says on the paywall, in their own texting voice.
     private var pitch: String {
+        if lockedReply {
+            let lines: [String: String] = [
+                "selene": "I've answered you, darling. It's waiting under the moonlight.",
+                "kaz": "Reply's sent. It's behind the paywall. Your call.",
+                "ivy": "I've written you a proper answer, love. It's just there, under the tea towel.",
+                "zephyr": "i replied!! the ball made me. it's right there",
+                "mirela": "I've answered you, my dear. Come, read it.",
+            ]
+            return lines[psychic.id] ?? lines["selene"]!
+        }
         let lines: [String: String] = [
             "selene": "Darling, I've barely begun with {topic}. Stay a while.",
             "kaz": "That was the warm-up. The real read on {topic} starts now.",
@@ -236,6 +260,8 @@ struct PaywallView: View {
         Analytics.track(.paywallCTATapped, analyticsParams)
         // TODO: Purchase `plan == .yearly ? Self.yearlyProductID : Self.weeklyProductID` with StoreKit 2,
         // then send `.trialStarted` (yearly) or `.purchased` (weekly) with `analyticsParams`.
+        // Placeholder: nothing is charged and Moonlit+ simply unlocks.
+        app.unlockPlus()
         onFinish()
     }
 

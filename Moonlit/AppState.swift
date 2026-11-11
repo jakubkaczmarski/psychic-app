@@ -47,6 +47,15 @@ final class AppState: ObservableObject {
     /// The user said "Not now" to the morning-message prompt on the home screen.
     @Published var morningPromptDismissed: Bool { didSet { defaults.set(morningPromptDismissed, forKey: "morningPromptDismissed") } }
 
+    /// Moonlit+ is unlocked: no daily message limit.
+    /// TODO: Set from StoreKit's `Transaction.currentEntitlements` instead of the placeholder paywall.
+    @Published private(set) var isPlus: Bool { didSet { defaults.set(isPlus, forKey: "isPlus") } }
+    /// Free messages used on `freeDay`.
+    @Published private var freeUsed: Int { didSet { defaults.set(freeUsed, forKey: "freeUsed") } }
+    @Published private var freeDay: String? { didSet { defaults.set(freeDay, forKey: "freeDay") } }
+    /// Day a reply was locked; the composer shows the unlock bar for the rest of that day.
+    @Published private var lockedDay: String? { didSet { defaults.set(lockedDay, forKey: "lockedDay") } }
+
     private let defaults = UserDefaults.standard
     private let deviceID: String
     private var demoTurn: [String: Int] = [:]
@@ -84,6 +93,62 @@ final class AppState: ObservableObject {
         dailyStreakCount = defaults.integer(forKey: "dailyStreak")
         morningMessagesOn = defaults.bool(forKey: "morningMessagesOn")
         morningPromptDismissed = defaults.bool(forKey: "morningPromptDismissed")
+        isPlus = defaults.bool(forKey: "isPlus")
+        freeUsed = defaults.integer(forKey: "freeUsed")
+        freeDay = defaults.string(forKey: "freeDay")
+        lockedDay = defaults.string(forKey: "lockedDay")
+    }
+
+    // MARK: Free messages and Moonlit+
+
+    /// Messages a day without Moonlit+. The onboarding reading and the first question
+    /// about the card of the day don't count.
+    static let freeMessagesPerDay = 3
+
+    /// The goal picked in onboarding, used to personalise the paywall.
+    var onboardingGoal: OnboardingGoal? {
+        let id = defaults.string(forKey: "onboardingGoal")
+        return OnboardingCatalog.goals.first { $0.id == id }
+    }
+
+    var freeMessagesLeft: Int {
+        let used = freeDay == Daily.dayKey() ? freeUsed : 0
+        return max(0, Self.freeMessagesPerDay - used)
+    }
+
+    /// Today's free messages are gone and a reply was locked: the composer becomes the unlock bar.
+    var isLimitReached: Bool { !isPlus && lockedDay == Daily.dayKey() }
+
+    /// Placeholder for a successful purchase: unlocks Moonlit+ and every locked reply.
+    /// TODO: Call only after StoreKit verifies a transaction.
+    func unlockPlus() {
+        isPlus = true
+        lockedDay = nil
+        for (id, thread) in threads where thread.contains(where: { $0.locked == true }) {
+            threads[id] = thread.map { var m = $0; m.locked = nil; return m }
+        }
+    }
+
+    #if DEBUG
+    func resetPlusForTesting() {
+        isPlus = false
+        freeUsed = 0
+        freeDay = nil
+        lockedDay = nil
+    }
+    #endif
+
+    /// Counts a message against today's allowance. Returns whether its reply must be locked.
+    /// The unlock bar appears once the locked reply has arrived (see `respond`).
+    private func meterMessage() -> (locked: Bool, usedFree: Bool) {
+        guard !isPlus else { return (false, false) }
+        let today = Daily.dayKey()
+        if freeDay != today { freeDay = today; freeUsed = 0 }
+        if freeUsed < Self.freeMessagesPerDay {
+            freeUsed += 1
+            return (false, true)
+        }
+        return (true, false)
     }
 
     // MARK: Daily: card of the day, streak, morning messages
@@ -116,8 +181,11 @@ final class AppState: ObservableObject {
         guard onboarded else { return }
         let card = todaysCard
         path = []
+        // The first question about today's card is free.
+        let free = defaults.string(forKey: "dailyAskDay") != Daily.dayKey()
+        defaults.set(Daily.dayKey(), forKey: "dailyAskDay")
         openChat(matchedPsychic, asking: "My card of the day is \(card.name). What does it mean for me today?",
-                 note: Daily.cardNote(card))
+                 note: Daily.cardNote(card), free: free)
     }
 
     /// Asks iOS for permission and, if granted, schedules the next week of messages.
@@ -175,10 +243,11 @@ final class AppState: ObservableObject {
         return text
     }
 
-    func openChat(_ p: Psychic, asking question: String? = nil, note: String? = nil) {
+    /// `free` messages don't count against the daily limit (the onboarding reading, the daily card).
+    func openChat(_ p: Psychic, asking question: String? = nil, note: String? = nil, free: Bool = false) {
         ensureThread(p)
         if path.last != .chat(p.id) { path.append(.chat(p.id)) }
-        if let question { send(question, to: p, note: note) }
+        if let question { send(question, to: p, note: note, free: free) }
     }
 
     // MARK: Onboarding
@@ -191,7 +260,7 @@ final class AppState: ObservableObject {
         Analytics.track(.onboardingCompleted, ["goal": goal ?? "none", "psychic": match.id, "painCount": String(pains.count)])
         path = []
         onboarded = true
-        if let question { openChat(match, asking: question, note: note) }
+        if let question { openChat(match, asking: question, note: note, free: true) }
     }
 
     func replayOnboarding() {
@@ -222,9 +291,10 @@ final class AppState: ObservableObject {
 
     /// Sends a question. `note` is extra context for Claude that isn't shown in the bubble.
     /// With `ritual` (or a question asking for a card), the psychic performs their ritual first.
-    func send(_ raw: String, to p: Psychic, note: String? = nil, ritual: Bool = false) {
+    func send(_ raw: String, to p: Psychic, note: String? = nil, ritual: Bool = false, free: Bool = false) {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, answeringFor == nil else { return }
+        guard !text.isEmpty, answeringFor == nil, !isLimitReached else { return }
+        let meter = free ? (locked: false, usedFree: false) : meterMessage()
 
         var user = ChatMessage(role: .user, text: text, apiNote: note)
         var performed: Ritual?
@@ -239,7 +309,7 @@ final class AppState: ObservableObject {
             threads[p.id, default: []].append(ChatMessage(role: .psychic, text: Rituals.style(for: p.id).intro))
             threads[p.id, default: []].append(ChatMessage(role: .ritual, text: performed.detail, ritual: performed))
         }
-        respond(as: p, to: text, ritual: performed)
+        respond(as: p, to: text, ritual: performed, locked: meter.locked, usedFree: meter.usedFree)
     }
 
     /// Counts the message within the current visit, so analytics shows messages per visit.
@@ -262,7 +332,8 @@ final class AppState: ObservableObject {
 
     /// Replies like a person texting: reads the message ("Seen"), types, and sends
     /// the reply as a few short bubbles at the psychic's own typing speed.
-    private func respond(as p: Psychic, to question: String, ritual: Ritual?) {
+    /// A `locked` reply is fetched and "typed" as usual but shown blurred until Moonlit+ is unlocked.
+    private func respond(as p: Psychic, to question: String, ritual: Ritual?, locked: Bool, usedFree: Bool) {
         let history = apiTurns(for: p)
         let memory = memoryNotes(for: p)
         let userMessageID = threads[p.id]?.last(where: { $0.role == .user })?.id
@@ -271,6 +342,11 @@ final class AppState: ObservableObject {
 
         let name = userName.trimmingCharacters(in: .whitespaces)
         let sign = sign
+
+        // A failed reply doesn't use up a free message or trigger the limit.
+        func refund() {
+            if usedFree, freeDay == Daily.dayKey() { freeUsed = max(0, freeUsed - 1) }
+        }
 
         Task {
             defer { answeringFor = nil; typingFor = nil }
@@ -289,6 +365,7 @@ final class AppState: ObservableObject {
                 let parts = Self.bubbles(from: text)
                 guard !parts.isEmpty else {
                     threads[p.id, default: []].append(ChatMessage(role: .psychic, text: "…the vision faded. Ask me again?", isError: true))
+                    refund()
                     return
                 }
                 for (i, part) in parts.enumerated() {
@@ -297,7 +374,7 @@ final class AppState: ObservableObject {
                     if i == 0 { wait -= Date().timeIntervalSince(started) - style.readDelay.lowerBound }
                     typingFor = p.id
                     if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
-                    threads[p.id, default: []].append(ChatMessage(role: .psychic, text: part))
+                    threads[p.id, default: []].append(ChatMessage(role: .psychic, text: part, locked: locked && !isPlus ? true : nil))
                     if i < parts.count - 1 {
                         typingFor = nil
                         try? await Task.sleep(for: .seconds(Double.random(in: 0.3...0.8)))
@@ -306,6 +383,11 @@ final class AppState: ObservableObject {
             case .failure(let error):
                 let note = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
                 threads[p.id, default: []].append(ChatMessage(role: .psychic, text: note, isError: true))
+                refund()
+            }
+            if locked, threads[p.id]?.last?.locked == true {
+                lockedDay = Daily.dayKey()
+                Analytics.track(.replyLocked, ["psychic": p.id])
             }
         }
     }

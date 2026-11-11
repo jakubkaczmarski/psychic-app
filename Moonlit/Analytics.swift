@@ -28,6 +28,8 @@ enum Analytics {
         case firstMessageSent = "Chat.firstMessageSent"
         case messageSent = "Chat.messageSent"
         case visitStarted = "Chat.visitStarted"
+        /// A reply arrived after the free messages ran out and is shown blurred.
+        case replyLocked = "Chat.replyLocked"
         // Daily habits and retention
         case activeDay = "App.activeDay"
         case dailyCardRevealed = "Daily.cardRevealed"

@@ -49,6 +49,17 @@ The paywall at the end of onboarding is built from the user's own answers instea
 
 The second-person topic for each goal is `yourTopic` in `OnboardingCatalog.goals`; the voice lines and ritual benefits are in `PaywallView.swift`. The made-up review was removed: Apple rejects apps that show invented reviews.
 
+### Free messages and locked replies
+Without Moonlit+ you get **3 free messages a day** (`AppState.freeMessagesPerDay`). The onboarding reading and the first question about the card of the day don't count. Rituals and suggested questions do.
+
+- When 1 or 0 free messages are left, a line above the input says so ("No free messages left today · your next reply will be locked · **Go unlimited**").
+- A message sent after that still gets a real reply: the psychic reads it, types, and sends their bubbles as usual, but they arrive **blurred** with a lock, and an **Unlock {psychic}'s reply** button opens the paywall. The reply is never faked; unlocking shows exactly what was sent.
+- Once the locked reply has arrived, the input is replaced by "You've used today's 3 free messages. More tomorrow, or unlock unlimited readings now." So at most one reply a day is fetched and locked. The limit resets the next day.
+- If the reply fails, the free message is given back and nothing is locked.
+- The paywall opened from a locked reply says "Read Selene's reply", with a line in the psychic's voice ("I've answered you, darling. It's waiting under the moonlight.").
+- **Placeholder:** "Start my free trial" unlocks Moonlit+ (`AppState.unlockPlus()`) without charging anything, so testers can try both sides. Replace it with a verified StoreKit purchase before release. Settings shows the free messages left and, in debug builds, **Debug: reset Moonlit+ and free messages**.
+- The limit is kept on the phone, so reinstalling resets it. Enforce it on the server (per device and per subscription) once purchases are real.
+
 ### Analytics
 Funnel events go to [TelemetryDeck](https://telemetrydeck.com) (`Moonlit/Analytics.swift`), which collects no personal data, so no consent banner is needed. **Setup:** create an app in TelemetryDeck and paste its App ID into `Analytics.appID`. Until then nothing is sent, and debug builds print each event to the Xcode console (`📊 Paywall.shown …`). Debug builds send in test mode, so they don't mix with real users.
 
@@ -58,10 +69,12 @@ Funnel events go to [TelemetryDeck](https://telemetrydeck.com) (`Moonlit/Analyti
 | `Onboarding.completed` | Leaving onboarding | `goal`, `psychic`, `painCount` |
 | `Paywall.shown` / `planSelected` / `ctaTapped` / `restoreTapped` | Paywall actions | `source`, `psychic`, `goal`, `plan` |
 | `Paywall.dismissed` | Close or "Not now" | the above, plus `how` and `seconds` |
+| | `source` is `onboarding`, `lockedReply`, `limitBar`, `freeHint` or `settings` | |
 | `Purchase.trialStarted` / `Purchase.completed` | Defined, not sent yet: add them when StoreKit is wired up | |
 | `Chat.firstMessageSent` | The first message ever | as `Chat.messageSent` |
 | `Chat.messageSent` | Every message | `psychic`, `messageInVisit`, `ritual`, `live`, `daysSinceInstall` |
 | `Chat.visitStarted` | New thread or a welcome back after 6 h | `psychic`, `returning` |
+| `Chat.replyLocked` | A reply arrived blurred after the free messages ran out | `psychic` |
 | `App.activeDay` | Once per calendar day the app is opened | `daysSinceInstall`, `week` |
 | `Daily.cardRevealed` | Turning the card of the day | `streak` |
 | `Daily.morningMessagesAnswered` | The notification permission answer | `granted` |

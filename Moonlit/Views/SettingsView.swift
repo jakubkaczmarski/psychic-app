@@ -6,6 +6,7 @@ struct SettingsView: View {
     @State private var confirmClear = false
     @State private var checking = false
     @State private var notificationsBlocked = false
+    @State private var showPaywall = false
 
     private var status: (icon: String, color: Color, text: String) {
         if !app.isLive { return ("wand.and.stars", Theme.gold, "Demo mode: replies are pre-written") }
@@ -81,6 +82,20 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    if app.isPlus {
+                        Label("Moonlit+ is on", systemImage: "sparkles")
+                    } else {
+                        Text("\(app.freeMessagesLeft) of \(AppState.freeMessagesPerDay) free messages left today")
+                        Button("Get Moonlit+") { showPaywall = true }
+                    }
+                    #if DEBUG
+                    Button("Debug: reset Moonlit+ and free messages") { app.resetPlusForTesting() }
+                    #endif
+                } header: {
+                    Text("Moonlit+")
+                }
+
+                Section {
                     Button("Replay onboarding") {
                         dismiss()
                         app.replayOnboarding()
@@ -105,6 +120,10 @@ struct SettingsView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+            }
+            .sheet(isPresented: $showPaywall) {
+                PaywallView(psychic: app.matchedPsychic, goal: app.onboardingGoal,
+                            name: app.userName.trimmingCharacters(in: .whitespaces), source: "settings") { showPaywall = false }
             }
         }
         .preferredColorScheme(.dark)

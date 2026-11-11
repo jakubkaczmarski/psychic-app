@@ -5,6 +5,8 @@ struct ChatView: View {
     let psychic: Psychic
     @State private var draft = ""
     @FocusState private var inputFocused: Bool
+    /// The open paywall; its id says where it was opened from, for analytics.
+    @State private var paywall: SheetSource?
 
     private var messages: [ChatMessage] { app.threads[psychic.id] ?? [] }
     private var busy: Bool { app.answeringFor != nil }
@@ -19,15 +21,8 @@ struct ChatView: View {
                         .textCase(.uppercase)
                         .foregroundStyle(Theme.faint)
                         .padding(.vertical, 6)
-                    let lastUserID = messages.last(where: { $0.role == .user })?.id
                     ForEach(Array(messages.enumerated()), id: \.element.id) { i, m in
-                        // Like a messaging app: the avatar sits only on the last bubble of a run.
-                        // The typing bubble carries the avatar while they're still typing.
-                        let next = i + 1 < messages.count ? messages[i + 1] : nil
-                        let showAvatar = next.map { $0.role == .user } ?? (app.typingFor != psychic.id)
-                        MessageRow(message: m, psychic: psychic, showAvatar: showAvatar,
-                                   showSeen: m.id == lastUserID && m.seen == true)
-                            .id(m.id)
+                        row(i, m)
                     }
                     if app.typingFor == psychic.id {
                         TypingRow(psychic: psychic)
@@ -53,7 +48,10 @@ struct ChatView: View {
             .animation(.easeOut(duration: 0.2), value: app.typingFor)
         }
         .background(Theme.bg)
-        .safeAreaInset(edge: .bottom) { composer }
+        .safeAreaInset(edge: .bottom) {
+            if app.isLimitReached { limitBar } else { composer }
+        }
+        .sheet(item: $paywall) { item in paywallSheet(item.id) }
         .onReceive(NotificationCenter.default.publisher(for: .deviceDidShake)) { _ in
             // Shaking the phone shakes Zephyr's crystal ball.
             if psychic.id == "zephyr", !busy { app.performRitual(with: psychic) }
@@ -81,8 +79,64 @@ struct ChatView: View {
         }
     }
 
+    private func paywallSheet(_ source: String) -> some View {
+        PaywallView(psychic: psychic, goal: app.onboardingGoal, lockedReply: source == "lockedReply",
+                    name: app.userName.trimmingCharacters(in: .whitespaces), source: source) { paywall = nil }
+    }
+
+    @ViewBuilder private func row(_ i: Int, _ m: ChatMessage) -> some View {
+        // Like a messaging app: the avatar sits only on the last bubble of a run.
+        // The typing bubble carries the avatar while they're still typing.
+        let next: ChatMessage? = i + 1 < messages.count ? messages[i + 1] : nil
+        let typing = app.typingFor == psychic.id
+        let showAvatar: Bool = next.map { $0.role == .user } ?? !typing
+        let lastUserID = messages.last(where: { $0.role == .user })?.id
+        MessageRow(message: m, psychic: psychic, showAvatar: showAvatar,
+                   showSeen: m.id == lastUserID && m.seen == true)
+            .id(m.id)
+        // Under the last bubble of a locked reply.
+        if m.locked == true, next?.locked != true, !typing {
+            UnlockReplyRow(psychic: psychic) { paywall = SheetSource(id: "lockedReply") }
+                .id("unlock-\(m.id)")
+        }
+    }
+
+    /// Replaces the composer once today's free messages are used up.
+    private var limitBar: some View {
+        VStack(spacing: 10) {
+            Text("You've used today's \(AppState.freeMessagesPerDay) free messages. More tomorrow, or unlock unlimited readings now.")
+                .font(.system(size: 14))
+                .foregroundStyle(Theme.muted)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("Unlock unlimited readings") { paywall = SheetSource(id: "limitBar") }
+                .buttonStyle(GoldButtonStyle())
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 12)
+        .padding(.bottom, 6)
+        .background(Theme.bg)
+    }
+
+    /// "1 free message left today", shown when it's about to run out.
+    @ViewBuilder private var freeHint: some View {
+        if !app.isPlus, app.freeMessagesLeft <= 1 {
+            Button { paywall = SheetSource(id: "freeHint") } label: {
+                Text(app.freeMessagesLeft == 1
+                     ? "1 free message left today · **Go unlimited**"
+                     : "No free messages left today · your next reply will be locked · **Go unlimited**")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.muted)
+                    .multilineTextAlignment(.center)
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 20)
+        }
+    }
+
     private var composer: some View {
         VStack(spacing: 8) {
+            freeHint
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     let style = Rituals.style(for: psychic.id)
@@ -153,6 +207,31 @@ struct ChatView: View {
     }
 }
 
+/// Lets `.sheet(item:)` take a plain string.
+private struct SheetSource: Identifiable { let id: String }
+
+/// Shown under a locked reply.
+struct UnlockReplyRow: View {
+    let psychic: Psychic
+    let unlock: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Color.clear.frame(width: 30, height: 1)
+            Button(action: unlock) {
+                Label("Unlock \(psychic.short)'s reply", systemImage: "lock.open.fill")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Theme.onGold)
+                    .padding(.horizontal, 18)
+                    .frame(minHeight: 44)
+                    .background(Theme.gold, in: Capsule())
+            }
+            Spacer(minLength: 0)
+        }
+        .transition(.opacity)
+    }
+}
+
 /// "Selene is typing" bubble.
 struct TypingRow: View {
     let psychic: Psychic
@@ -213,6 +292,16 @@ struct MessageRow: View {
                                 .foregroundStyle(Theme.faint)
                         }
                         .accessibilityElement(children: .combine)
+                    } else if message.locked == true {
+                        // The real reply, blurred until Moonlit+ is unlocked.
+                        Text(message.text)
+                            .font(.system(size: 16))
+                            .foregroundStyle(Theme.text)
+                            .lineSpacing(2)
+                            .blur(radius: 6)
+                            .overlay(Image(systemName: "lock.fill").font(.system(size: 14)).foregroundStyle(Theme.gold))
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel("Locked reply from \(psychic.short)")
                     } else {
                         Text(message.text)
                             .font(.system(size: 16))

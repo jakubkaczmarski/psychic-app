@@ -24,6 +24,8 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     var startsVisit: Bool? = nil
     /// The psychic has "read" this user message.
     var seen: Bool? = nil
+    /// A reply sent after the free messages ran out: shown blurred until Moonlit+ is unlocked.
+    var locked: Bool? = nil
 }
 
 struct Psychic: Identifiable, Hashable {

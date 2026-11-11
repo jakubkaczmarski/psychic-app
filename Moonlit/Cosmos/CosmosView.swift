@@ -35,6 +35,7 @@ final class CosmosController: NSObject, ObservableObject {
         displayLink = link
         view.scene = cosmos.scene
         view.pointOfView = cosmos.cameraNode
+        cosmos.pointOfView = cosmos.cameraNode
         view.allowsCameraControl = true
         view.backgroundColor = .black
         view.antialiasingMode = .multisampling4X
@@ -89,13 +90,16 @@ final class CosmosController: NSObject, ObservableObject {
         } else {
             shot = (Self.overview, Self.overviewAim)
         }
-        let cam = cosmos.cameraNode
+        // After a gesture SceneKit drives its own copy of the camera, so move whichever one is on screen.
+        let cam = view?.pointOfView ?? cosmos.cameraNode
         view?.defaultCameraController.stopInertia()
         SCNTransaction.begin()
         SCNTransaction.animationDuration = 1.3
         SCNTransaction.animationTimingFunction = CAMediaTimingFunction(controlPoints: 0.3, 0, 0, 1)
         cam.position = shot.eye
         cam.look(at: shot.aim, up: SCNVector3(0, 1, 0), localFront: SCNVector3(0, 0, -1))
+        // Pinching narrows the lens instead of moving the camera; undo it so the shot frames correctly.
+        cam.camera?.fieldOfView = CosmosScene.fieldOfView
         SCNTransaction.completionBlock = { [weak self] in
             self?.view?.defaultCameraController.target = SCNVector3Zero
         }
@@ -135,6 +139,7 @@ final class CosmosController: NSObject, ObservableObject {
     /// a more important one is hidden.
     @objc private func placeLabels() {
         guard let view, view.bounds.height > 0 else { return }
+        cosmos.pointOfView = view.pointOfView
         if selected != nil { cosmos.update(to: currentDate, selected: selected) }
         let h = view.bounds.height
         var taken: [CGRect] = []

@@ -111,7 +111,10 @@ struct SettingsView: View {
                             Button("Delete readings", role: .destructive) { app.clearReadings() }
                         }
                 } footer: {
-                    Text("Moonlit is for entertainment only. Its psychics are AI characters and can't predict the future.")
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Moonlit is for entertainment only. Its psychics are AI characters and can't predict the future.")
+                        Text("Planet textures: [Solar System Scope](https://www.solarsystemscope.com/textures/), based on NASA imagery, CC BY 4.0.")
+                    }
                 }
             }
             .scrollContentBackground(.hidden)

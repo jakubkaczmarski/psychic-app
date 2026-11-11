@@ -9,6 +9,8 @@ import UIKit
 final class CosmosScene {
     let scene = SCNScene()
     let cameraNode = SCNNode()
+    /// The camera actually on screen (SceneKit swaps in its own after a gesture).
+    weak var pointOfView: SCNNode?
     private(set) var bodyNodes: [Ephemeris.Body: SCNNode] = [:]
     private let moonNode = SCNNode()
     private let sightline = SCNNode()
@@ -20,6 +22,7 @@ final class CosmosScene {
     private(set) var highlightedSign: Int?
 
     static let zodiacRadius: Float = 24
+    static let fieldOfView: CGFloat = 64
     static let bandWidth: Float = 3
     private static let starRadius: Float = 90
 
@@ -44,13 +47,19 @@ final class CosmosScene {
     }
 
     init() {
-        scene.background.contents = UIColor(red: 0.03, green: 0.025, blue: 0.07, alpha: 1)
+        // The real Milky Way, dimmed so planets and labels stay readable.
+        if let sky = PlanetTextures.milkyWay {
+            scene.background.contents = sky
+            scene.background.intensity = 0.45
+        } else {
+            scene.background.contents = UIColor(red: 0.03, green: 0.025, blue: 0.07, alpha: 1)
+        }
         scene.lightingEnvironment.intensity = 0
 
         let camera = SCNCamera()
         camera.zFar = 400
         camera.projectionDirection = .horizontal
-        camera.fieldOfView = 64
+        camera.fieldOfView = Self.fieldOfView
         camera.wantsHDR = true
         // Fixed exposure: auto-exposure slowly brightens the dark sky into a purple wash.
         camera.wantsExposureAdaptation = false
@@ -133,8 +142,7 @@ final class CosmosScene {
             let b = Float.random(in: 0.08...0.3, using: &rng)
             bandC.append(SIMD4(b * 0.8, b * 0.75, b, 1))
         }
-        let band = SCNNode(geometry: pointCloud(bandV, colors: bandC, size: 1.6))
-        stars.addChildNode(band)
+        _ = (bandV, bandC) // The photographic sky now provides the Milky Way.
     }
 
     private func buildZodiacRing() {
@@ -196,9 +204,11 @@ final class CosmosScene {
         m.shaderModifiers = [.fragment: """
         float mu = abs(dot(normalize(_surface.normal), normalize(_surface.view)));
         // HDR: the core is brighter than 1.0, so only the Sun blooms.
-        vec3 edge = vec3(1.0, 0.42, 0.08);
-        vec3 core = vec3(1.9, 1.7, 1.35);
-        _output.color.rgb *= mix(edge, core, pow(mu, 0.45));
+        // The photo already has the Sun's colour: brighten towards white-gold in the middle,
+        // darken a little at the edge.
+        vec3 base = _output.color.rgb;
+        vec3 hot = mix(base, vec3(1.0, 0.9, 0.6), 0.45) * 1.7;
+        _output.color.rgb = mix(base * 0.75, hot, pow(mu, 0.6));
         """]
         sphere.materials = [m]
         let surface = SCNNode(geometry: sphere)
@@ -247,7 +257,7 @@ final class CosmosScene {
         m.diffuse.contents = PlanetTextures.texture(for: body)
         // A little self-light so the night side isn't pitch black.
         m.emission.contents = PlanetTextures.texture(for: body)
-        m.emission.intensity = 0.08
+        m.emission.intensity = 0.05
         sphere.materials = [m]
         let globe = SCNNode(geometry: sphere)
         // A slight axial tilt, then spin.
@@ -256,6 +266,20 @@ final class CosmosScene {
         spin.addChildNode(globe)
         globe.runAction(.repeatForever(.rotateBy(x: 0, y: .pi * 2, z: 0, duration: body == .jupiter || body == .saturn ? 10 : 18)))
         node.addChildNode(spin)
+
+        if body == .earth, let clouds = PlanetTextures.earthClouds {
+            let layer = SCNSphere(radius: planetSize(body) * 1.015)
+            layer.segmentCount = 48
+            let cm = SCNMaterial()
+            cm.lightingModel = .lambert
+            cm.diffuse.contents = clouds
+            cm.blendMode = .add
+            cm.writesToDepthBuffer = false
+            layer.materials = [cm]
+            let cloudNode = SCNNode(geometry: layer)
+            cloudNode.runAction(.repeatForever(.rotateBy(x: 0, y: .pi * 2, z: 0, duration: 26)))
+            globe.addChildNode(cloudNode)
+        }
 
         // Atmosphere rim for the planets that have one.
         if [.earth, .venus, .uranus, .neptune, .jupiter, .saturn].contains(body) {
@@ -277,16 +301,9 @@ final class CosmosScene {
         }
 
         if body == .saturn {
-            let r = planetSize(body)
-            let plane = SCNPlane(width: r * 4.6, height: r * 4.6)
-            let rm = SCNMaterial()
-            rm.lightingModel = .constant
-            rm.diffuse.contents = PlanetTextures.saturnRings()
-            rm.isDoubleSided = true
-            rm.writesToDepthBuffer = false
-            plane.materials = [rm]
-            let ring = SCNNode(geometry: plane)
-            ring.eulerAngles = SCNVector3(-Float.pi / 2 + 0.45, 0, 0.15)
+            let r = Float(planetSize(body))
+            let ring = SCNNode(geometry: PlanetTextures.saturnRingGeometry(inner: r * 1.25, outer: r * 2.3))
+            ring.eulerAngles = SCNVector3(0.45, 0, 0.15)
             node.addChildNode(ring)
         }
         let halo = SCNNode(geometry: SCNPlane(width: planetSize(body) * 3.2, height: planetSize(body) * 3.2))
@@ -363,7 +380,7 @@ final class CosmosScene {
         // A thin glowing beam from Earth to the dial.
         let dx = end.x - earth.x, dy = end.y - earth.y, dz = end.z - earth.z
         let length = sqrt(dx * dx + dy * dy + dz * dz)
-        let cam = cameraNode.position
+        let cam = (pointOfView ?? cameraNode).presentation.position
         let camDist = sqrt(pow(cam.x - earth.x, 2) + pow(cam.y - earth.y, 2) + pow(cam.z - earth.z, 2))
         let beam = SCNCylinder(radius: CGFloat(min(max(camDist * 0.0012, 0.008), 0.05)), height: CGFloat(length))
         let bm = SCNMaterial()

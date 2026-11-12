@@ -23,8 +23,8 @@ final class CosmosController: NSObject, ObservableObject {
         overlay.scaleMode = .resizeFill
         overlay.backgroundColor = .clear
         view.overlaySKScene = overlay
-        for body in Ephemeris.Body.allCases where body != .moon {
-            labels[body.rawValue] = makeLabel(glyph: nil, name: body.name, color: .white, size: body == .sun ? 13 : 12)
+        for body in Ephemeris.Body.allCases {
+            labels[body.rawValue] = makeLabel(glyph: nil, name: body.name, color: .white, size: body == .sun ? 13 : (body == .moon ? 11 : 12))
         }
         for (i, sign) in ZodiacSign.all.enumerated() {
             labels["sign\(i)"] = makeLabel(glyph: sign.glyph, name: sign.name, color: UIColor(Theme.gold), size: 12, weight: .bold)
@@ -142,35 +142,59 @@ final class CosmosController: NSObject, ObservableObject {
         cosmos.pointOfView = view.pointOfView
         if let eye = view.pointOfView?.presentation.worldPosition { cosmos.sizeSelectionRing(cameraAt: eye, selected: selected) }
         let h = view.bounds.height
+        // Where every body is drawn on screen, so labels don't land on top of another planet.
+        let upVec = view.pointOfView?.presentation.worldUp ?? SCNVector3(0, 1, 0)
+        let discs: [(key: String, rect: CGRect)] = Ephemeris.Body.allCases.compactMap { body in
+            guard let node = cosmos.bodyNodes[body] else { return nil }
+            let c = node.presentation.position, r = cosmos.radius(of: body)
+            let s = view.projectPoint(c)
+            guard s.z > 0, s.z < 1 else { return nil }
+            let e = view.projectPoint(SCNVector3(c.x + upVec.x * r, c.y + upVec.y * r, c.z + upVec.z * r))
+            let sr = CGFloat(min(hypot(e.x - s.x, e.y - s.y), 400))
+            return (body.rawValue, CGRect(x: CGFloat(s.x) - sr, y: h - CGFloat(s.y) - sr, width: sr * 2, height: sr * 2))
+        }
         var taken: [CGRect] = []
-        func place(_ key: String, at p: SCNVector3, offset: CGFloat, alpha: CGFloat, size: CGSize, force: Bool = false) {
+        /// Places a label below its point; if that spot is taken, tries right, left and above before hiding it.
+        func place(_ key: String, at p: SCNVector3, offset: CGFloat, alpha: CGFloat, size: CGSize,
+                   force: Bool = false, gap: CGFloat = 0) {
             guard let label = labels[key] else { return }
             let s = view.projectPoint(p)
             guard s.z > 0, s.z < 1, s.x > -60, s.x < Float(view.bounds.width) + 60 else { label.isHidden = true; return }
-            let pos = CGPoint(x: CGFloat(s.x), y: h - CGFloat(s.y) + offset)
-            let rect = CGRect(x: pos.x - size.width / 2, y: pos.y - size.height / 2, width: size.width, height: size.height)
-            if !force, taken.contains(where: { $0.intersects(rect) }) { label.isHidden = true; return }
-            taken.append(rect)
-            label.isHidden = false
-            label.position = pos
-            label.alpha = alpha
+            let base = CGPoint(x: CGFloat(s.x), y: h - CGFloat(s.y))
+            let side = gap + size.width / 2 + 4
+            let candidates = [CGPoint(x: base.x, y: base.y + offset),
+                              CGPoint(x: base.x + side, y: base.y),
+                              CGPoint(x: base.x - side, y: base.y),
+                              CGPoint(x: base.x, y: base.y - offset)]
+            for pos in candidates {
+                let rect = CGRect(x: pos.x - size.width / 2, y: pos.y - size.height / 2, width: size.width, height: size.height)
+                let onAPlanet = discs.contains { $0.key != key && $0.rect.intersects(rect) }
+                if force || (!onAPlanet && !taken.contains(where: { $0.intersects(rect) })) {
+                    taken.append(rect)
+                    label.isHidden = false
+                    label.position = pos
+                    label.alpha = alpha
+                    return
+                }
+            }
+            label.isHidden = true
         }
         // Most important first: the selected body, the Sun, Earth, then the big planets.
-        var order: [Ephemeris.Body] = [.sun, .earth, .jupiter, .saturn, .mars, .venus, .mercury, .uranus, .neptune]
+        var order: [Ephemeris.Body] = [.sun, .earth, .jupiter, .saturn, .mars, .venus, .mercury, .uranus, .neptune, .moon]
         if let selected, let i = order.firstIndex(of: selected) { order.remove(at: i); order.insert(selected, at: 0) }
+        let up = view.pointOfView?.presentation.worldUp ?? SCNVector3(0, 1, 0)
         for body in order {
             guard let node = cosmos.bodyNodes[body] else { continue }
             let dimmed = selected != nil && selected != body && body != .earth
             let width = CGFloat(body.name.count) * 7.5 + 6
-            // How big the body looks on screen, so the label sits just under its edge at any zoom.
-            let up = view.pointOfView?.presentation.worldUp ?? SCNVector3(0, 1, 0)
+            // How big the body looks on screen, so the label sits just outside its edge at any zoom.
             let r = cosmos.radius(of: body)
             let c = node.presentation.position
             let edge = view.projectPoint(SCNVector3(c.x + up.x * r, c.y + up.y * r, c.z + up.z * r))
             let center = view.projectPoint(c)
             let screenRadius = CGFloat(min(hypot(edge.x - center.x, edge.y - center.y), 400))
-            place(body.rawValue, at: c, offset: -(screenRadius + 11), alpha: dimmed ? 0.5 : 1,
-                  size: CGSize(width: width, height: 16), force: body == selected)
+            place(body.rawValue, at: c, offset: -(screenRadius + 11), alpha: (dimmed ? 0.5 : 1) * (body == .moon ? 0.8 : 1),
+                  size: CGSize(width: width, height: 16), force: body == selected, gap: screenRadius)
         }
         let lit = cosmos.highlightedSign
         for i in 0..<12 {

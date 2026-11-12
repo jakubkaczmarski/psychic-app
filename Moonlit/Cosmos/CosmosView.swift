@@ -12,7 +12,7 @@ final class CosmosController: NSObject, ObservableObject {
 
     static let overview = SCNVector3(0, 36, 31)
     /// The overview looks a little below the Sun, so the system sits above the panel.
-    static let overviewAim = SCNVector3Zero
+    static let overviewAim = SCNVector3(0, 0, 5)
 
     private let overlay = SKScene()
     private var labels: [String: SKNode] = [:]
@@ -214,6 +214,23 @@ struct CosmosView: View {
     /// Days from now, fractional while scrubbing.
     @State private var offset: Double = 0
     @State private var playing = false
+    /// Playback speed in days per second.
+    @State private var speed: PlaySpeed = .day
+
+    enum PlaySpeed: Double, CaseIterable {
+        case day = 1, week = 7, month = 30
+        var label: String {
+            switch self {
+            case .day: "1 day/s"
+            case .week: "1 week/s"
+            case .month: "1 month/s"
+            }
+        }
+        var next: PlaySpeed {
+            let all = Self.allCases
+            return all[(all.firstIndex(of: self)! + 1) % all.count]
+        }
+    }
     @State private var showHint = true
     /// The detail card shows one line until tapped.
     @State private var detailExpanded = false
@@ -272,12 +289,15 @@ struct CosmosView: View {
 
     // MARK: Time
 
-    /// While playing, time runs at about a month a second.
+    /// While playing, time glides forward smoothly at the chosen speed (1 day a second by default).
     private func play() async {
         guard playing else { return }
+        var last = Date()
         while !Task.isCancelled, playing {
-            offset += 1
-            try? await Task.sleep(for: .milliseconds(33))
+            try? await Task.sleep(for: .milliseconds(16))
+            let now = Date()
+            offset += now.timeIntervalSince(last) * speed.rawValue
+            last = now
         }
     }
 
@@ -342,21 +362,40 @@ struct CosmosView: View {
                     Text(date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated).year()))
                         .font(Theme.display(24, .medium))
                         .foregroundStyle(Theme.textBright)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
                         .contentTransition(.numericText())
                     Text(relativeLabel).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.gold)
                 }
-                Spacer()
+                Spacer(minLength: 8)
                 if Int(offset.rounded()) != 0 {
-                    Button("Today") {
+                    Button {
                         playing = false
                         withAnimation(.easeInOut(duration: 0.6)) { offset = 0 }
                         animateBackToToday()
+                    } label: {
+                        Image(systemName: "arrow.uturn.backward")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(Theme.textBright)
+                            .frame(width: 36, height: 36)
+                            .background(Theme.surfaceRaised, in: Circle())
                     }
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Theme.textBright)
-                    .padding(.horizontal, 14).frame(height: 36)
-                    .background(Theme.surfaceRaised, in: Capsule())
+                    .accessibilityLabel("Back to today")
+                    .transition(.scale.combined(with: .opacity))
                 }
+                Button { speed = speed.next } label: {
+                    Text(speed.label)
+                        .font(.system(size: 13, weight: .semibold))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .fixedSize()
+                        .foregroundStyle(Theme.textBright)
+                        .padding(.horizontal, 11).frame(height: 36)
+                        .background(Theme.surfaceRaised, in: Capsule())
+                        .contentTransition(.numericText())
+                }
+                .accessibilityLabel("Playback speed \(speed.label)")
+                .accessibilityHint("Changes how fast time moves")
                 Button { playing.toggle() } label: {
                     Image(systemName: playing ? "pause.fill" : "play.fill")
                         .font(.system(size: 15, weight: .bold))
@@ -367,7 +406,7 @@ struct CosmosView: View {
                 .accessibilityLabel(playing ? "Pause time" : "Play time forward")
             }
 
-            TimeRuler(offset: $offset, onScrubStart: { playing = false })
+            TimeRuler(offset: $offset, ticks: !playing || speed == .day, onScrubStart: { playing = false })
 
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -526,6 +565,8 @@ struct CosmosView: View {
 /// A ruler you drag sideways to move through time. Each tick is a day; long ticks mark the 1st of a month.
 private struct TimeRuler: View {
     @Binding var offset: Double
+    /// Haptic tick per day; off while time plays fast.
+    var ticks = true
     var onScrubStart: () -> Void
     @State private var dragStart: Double?
     private let pointsPerDay: CGFloat = 9
@@ -579,7 +620,7 @@ private struct TimeRuler: View {
                         }
                     }
             )
-            .sensoryFeedback(.selection, trigger: Int(offset.rounded()))
+            .sensoryFeedback(.selection, trigger: ticks ? Int(offset.rounded()) : 0)
         }
         .frame(height: 34)
         .mask(LinearGradient(colors: [.clear, .black, .black, .clear], startPoint: .leading, endPoint: .trailing))

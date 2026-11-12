@@ -155,22 +155,35 @@ final class CosmosScene {
         let ring = SCNNode()
         ring.name = "zodiac"
         let inner = Self.zodiacRadius - Self.bandWidth / 2, outer = Self.zodiacRadius + Self.bandWidth / 2
-        // A flat dial band with alternating segments, one per sign.
+        // A dark dial band with alternating segments, one per sign, edged in fine gold like an instrument.
+        let gold = UIColor(Theme.gold)
         for s in 0..<12 {
-            let shade: CGFloat = s % 2 == 0 ? 0.05 : 0.022
+            let shade: CGFloat = s % 2 == 0 ? 0.07 : 0.035
             ring.addChildNode(bandSegment(from: Double(s) * 30, to: Double(s + 1) * 30, inner: inner, outer: outer,
-                                          color: UIColor(red: 0.75, green: 0.68, blue: 1, alpha: shade)))
+                                          color: UIColor(red: 0.42, green: 0.36, blue: 0.75, alpha: shade)))
             ring.addChildNode(lineNode([Self.ecliptic(Double(s) * 30, radius: inner), Self.ecliptic(Double(s) * 30, radius: outer)],
-                                       color: UIColor(white: 1, alpha: 0.18)))
+                                       color: gold.withAlphaComponent(0.32)))
         }
-        for r in [inner, outer] {
-            ring.addChildNode(lineNode((0...360).map { Self.ecliptic(Double($0), radius: r) }, color: UIColor(white: 1, alpha: 0.16)))
+        ring.addChildNode(lineNode((0...720).map { Self.ecliptic(Double($0) / 2, radius: inner) }, color: gold.withAlphaComponent(0.4)))
+        ring.addChildNode(lineNode((0...720).map { Self.ecliptic(Double($0) / 2, radius: outer) }, color: gold.withAlphaComponent(0.28)))
+        // A second hairline just inside the outer edge, for a finished rim.
+        ring.addChildNode(lineNode((0...720).map { Self.ecliptic(Double($0) / 2, radius: outer - 0.18) }, color: gold.withAlphaComponent(0.12)))
+        // Degree ticks on the inner edge: short every degree, longer every 5°, longest every 10°.
+        var ticks: [SCNVector3] = []
+        for k in 0..<360 where k % 30 != 0 {
+            let len: Float = k % 10 == 0 ? 0.55 : (k % 5 == 0 ? 0.38 : 0.18)
+            ticks += [Self.ecliptic(Double(k), radius: inner), Self.ecliptic(Double(k), radius: inner + len)]
         }
-        // Degree ticks every 5°, on the inner edge.
-        for k in stride(from: 0, to: 360, by: 5) where k % 30 != 0 {
-            ring.addChildNode(lineNode([Self.ecliptic(Double(k), radius: inner), Self.ecliptic(Double(k), radius: inner + 0.35)],
-                                       color: UIColor(white: 1, alpha: 0.12)))
-        }
+        let tickSource = SCNGeometrySource(vertices: ticks)
+        let tickGeo = SCNGeometry(sources: [tickSource],
+                                  elements: [SCNGeometryElement(indices: Array(0..<Int32(ticks.count)), primitiveType: .line)])
+        let tm = SCNMaterial()
+        tm.lightingModel = .constant
+        tm.diffuse.contents = gold.withAlphaComponent(0.3)
+        tm.blendMode = .add
+        tm.writesToDepthBuffer = false
+        tickGeo.materials = [tm]
+        ring.addChildNode(SCNNode(geometry: tickGeo))
         scene.rootNode.addChildNode(ring)
     }
 

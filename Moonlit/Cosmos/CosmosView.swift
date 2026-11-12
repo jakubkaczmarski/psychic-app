@@ -140,6 +140,7 @@ final class CosmosController: NSObject, ObservableObject {
     @objc private func placeLabels() {
         guard let view, view.bounds.height > 0 else { return }
         cosmos.pointOfView = view.pointOfView
+        if let eye = view.pointOfView?.presentation.worldPosition { cosmos.sizeSelectionRing(cameraAt: eye, selected: selected) }
         let h = view.bounds.height
         var taken: [CGRect] = []
         func place(_ key: String, at p: SCNVector3, offset: CGFloat, alpha: CGFloat, size: CGSize, force: Bool = false) {
@@ -161,7 +162,14 @@ final class CosmosController: NSObject, ObservableObject {
             guard let node = cosmos.bodyNodes[body] else { continue }
             let dimmed = selected != nil && selected != body && body != .earth
             let width = CGFloat(body.name.count) * 7.5 + 6
-            place(body.rawValue, at: node.position, offset: body == .sun ? -26 : -16, alpha: dimmed ? 0.5 : 1,
+            // How big the body looks on screen, so the label sits just under its edge at any zoom.
+            let up = view.pointOfView?.presentation.worldUp ?? SCNVector3(0, 1, 0)
+            let r = cosmos.radius(of: body)
+            let c = node.presentation.position
+            let edge = view.projectPoint(SCNVector3(c.x + up.x * r, c.y + up.y * r, c.z + up.z * r))
+            let center = view.projectPoint(c)
+            let screenRadius = CGFloat(min(hypot(edge.x - center.x, edge.y - center.y), 400))
+            place(body.rawValue, at: c, offset: -(screenRadius + 11), alpha: dimmed ? 0.5 : 1,
                   size: CGSize(width: width, height: 16), force: body == selected)
         }
         let lit = cosmos.highlightedSign
@@ -207,6 +215,8 @@ struct CosmosView: View {
     @State private var offset: Double = 0
     @State private var playing = false
     @State private var showHint = true
+    /// The detail card shows one line until tapped.
+    @State private var detailExpanded = false
     /// Height of the bottom panel; the 3D view fits in the space above it so the Sun stays centred.
     @State private var panelHeight: CGFloat = 250
     /// Called with a question and context for Claude when the user asks their psychic about the sky.
@@ -231,6 +241,16 @@ struct CosmosView: View {
                     controller.currentDate = date
                     controller.update(date: date)
                 }
+
+            // A soft fade at the top so the title stays readable over bright planets.
+            VStack {
+                LinearGradient(colors: [.black.opacity(0.75), .black.opacity(0.35), .clear],
+                               startPoint: .top, endPoint: .bottom)
+                    .frame(height: 170)
+                    .ignoresSafeArea(edges: .top)
+                Spacer()
+            }
+            .allowsHitTesting(false)
 
             VStack(spacing: 0) {
                 topBar
@@ -358,6 +378,7 @@ struct CosmosView: View {
                     }
                 }
                 .onChange(of: controller.selected) { _, new in
+                    detailExpanded = false
                     if let new { withAnimation { proxy.scrollTo(new, anchor: .center) } }
                 }
             }
@@ -429,12 +450,28 @@ struct CosmosView: View {
                 .fixedSize(horizontal: false, vertical: true)
         } else if let p = placements.first(where: { $0.body == body }) {
             let psychic = app.matchedPsychic
-            VStack(alignment: .leading, spacing: 10) {
-                Text("\(body.name) in \(p.sign.name)\(p.retrograde ? ", retrograde" : "")")
-                    .font(Theme.display(20)).foregroundStyle(Theme.gold)
-                Text(explanation(p))
-                    .font(.system(size: 14)).foregroundStyle(Theme.textSoft)
-                    .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 8) {
+                Button { withAnimation(.easeInOut(duration: 0.25)) { detailExpanded.toggle() } } label: {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text("\(body.name) in \(p.sign.name)\(p.retrograde ? ", retrograde" : "")")
+                                .font(Theme.display(20)).foregroundStyle(Theme.gold)
+                            Spacer(minLength: 8)
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(Theme.muted)
+                                .rotationEffect(.degrees(detailExpanded ? 180 : 0))
+                        }
+                        Text(explanation(p))
+                            .font(.system(size: 14)).foregroundStyle(Theme.textSoft)
+                            .lineLimit(detailExpanded ? nil : 2)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint(detailExpanded ? "Shows less" : "Shows more")
                 if let retro = retrogradeLine(body) {
                     Label(retro, systemImage: "arrow.uturn.backward")
                         .font(.system(size: 13, weight: .semibold))

@@ -16,6 +16,10 @@ final class CosmosScene {
     private let sightline = SCNNode()
     private let signHighlight = SCNNode()
     private let retroArc = SCNNode()
+    /// A soft pulsing ring around the selected body, and a bright copy of its orbit.
+    private let selectionRing = SCNNode()
+    private let orbitHighlight = SCNNode()
+    private var highlightedOrbit: Ephemeris.Body?
     private var retroKey = ""
     private var orbitNodes: [Ephemeris.Body: SCNNode] = [:]
     /// The zodiac sign the selected body is in, for the label overlay.
@@ -100,6 +104,8 @@ final class CosmosScene {
         signHighlight.isHidden = true
         scene.rootNode.addChildNode(signHighlight)
         scene.rootNode.addChildNode(retroArc)
+        buildSelectionRing()
+        scene.rootNode.addChildNode(orbitHighlight)
     }
 
     // MARK: Building
@@ -233,6 +239,15 @@ final class CosmosScene {
         scene.rootNode.addChildNode(sun)
     }
 
+    /// Drawn radius of a body, for placing its label just below it.
+    func radius(of body: Ephemeris.Body) -> Float {
+        switch body {
+        case .sun: 0.9
+        case .moon: 0.16
+        default: Float(planetSize(body))
+        }
+    }
+
     private func planetSize(_ body: Ephemeris.Body) -> CGFloat {
         switch body {
         case .jupiter: 0.95
@@ -349,6 +364,71 @@ final class CosmosScene {
         // Orbits drift very slowly; redraw them only when far from where they were drawn.
         if orbitNodes.isEmpty || abs(d - orbitsDrawnAt) > 3650 { drawOrbits(days: d) }
         updateSightline(days: d, selected: selected)
+        updateSelection(selected, days: d)
+    }
+
+    private func buildSelectionRing() {
+        let size = CGSize(width: 256, height: 256)
+        let image = UIGraphicsImageRenderer(size: size).image { ctx in
+            let c = ctx.cgContext
+            c.setStrokeColor(UIColor(Theme.gold).cgColor)
+            c.setLineWidth(5)
+            c.strokeEllipse(in: CGRect(x: 14, y: 14, width: 228, height: 228))
+            c.setStrokeColor(UIColor(Theme.gold).withAlphaComponent(0.25).cgColor)
+            c.setLineWidth(14)
+            c.strokeEllipse(in: CGRect(x: 14, y: 14, width: 228, height: 228))
+        }
+        let plane = SCNPlane(width: 1, height: 1)
+        let m = SCNMaterial()
+        m.lightingModel = .constant
+        m.diffuse.contents = image
+        m.blendMode = .add
+        m.writesToDepthBuffer = false
+        m.readsFromDepthBuffer = false
+        plane.materials = [m]
+        let ring = SCNNode(geometry: plane)
+        ring.constraints = [SCNBillboardConstraint()]
+        // Breathes gently so the eye finds it.
+        ring.runAction(.repeatForever(.sequence([
+            .group([.scale(to: 1.12, duration: 1.1), .fadeOpacity(to: 0.55, duration: 1.1)]),
+            .group([.scale(to: 1, duration: 1.1), .fadeOpacity(to: 1, duration: 1.1)]),
+        ])))
+        selectionRing.addChildNode(ring)
+        selectionRing.isHidden = true
+        scene.rootNode.addChildNode(selectionRing)
+    }
+
+    /// Sizes the ring to hug the body up close but never shrink below a few degrees of the view far away.
+    func sizeSelectionRing(cameraAt eye: SCNVector3, selected: Ephemeris.Body?) {
+        guard let selected, !selectionRing.isHidden else { return }
+        let p = selectionRing.position
+        let dist = sqrt(pow(eye.x - p.x, 2) + pow(eye.y - p.y, 2) + pow(eye.z - p.z, 2))
+        let r = max(radius(of: selected) * 2.6, dist * 0.06)
+        selectionRing.scale = SCNVector3(r, r, r)
+    }
+
+    /// Ring around the selected body; its orbit drawn bright and the other orbits dimmed.
+    private func updateSelection(_ selected: Ephemeris.Body?, days d: Double) {
+        if let selected, let node = bodyNodes[selected] {
+            selectionRing.position = node.position
+            selectionRing.isHidden = false
+        } else {
+            selectionRing.isHidden = true
+        }
+        let orbitBody = selected.flatMap { Ephemeris.planets.contains($0) ? $0 : nil }
+        if orbitBody != highlightedOrbit {
+            highlightedOrbit = orbitBody
+            orbitHighlight.childNodes.forEach { $0.removeFromParentNode() }
+            if let b = orbitBody {
+                let pts = Ephemeris.orbit(b, days: d).map(Self.scenePosition)
+                orbitHighlight.addChildNode(lineNode(pts, color: UIColor(rgb: b.colorHex).withAlphaComponent(0.9)))
+                orbitHighlight.addChildNode(lineNode(pts.map { SCNVector3($0.x * 1.004, $0.y, $0.z * 1.004) },
+                                                     color: UIColor(rgb: b.colorHex).withAlphaComponent(0.45)))
+            }
+            for (body, node) in orbitNodes {
+                node.runAction(.fadeOpacity(to: orbitBody == nil || body == orbitBody ? 1 : 0.35, duration: 0.4))
+            }
+        }
     }
 
     private var orbitsDrawnAt: Double = 0

@@ -140,7 +140,6 @@ final class CosmosController: NSObject, ObservableObject {
     @objc private func placeLabels() {
         guard let view, view.bounds.height > 0 else { return }
         cosmos.pointOfView = view.pointOfView
-        if selected != nil { cosmos.update(to: currentDate, selected: selected) }
         let h = view.bounds.height
         var taken: [CGRect] = []
         func place(_ key: String, at p: SCNVector3, offset: CGFloat, alpha: CGFloat, size: CGSize, force: Bool = false) {

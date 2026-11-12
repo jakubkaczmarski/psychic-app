@@ -377,22 +377,23 @@ final class CosmosScene {
         }
         let lon = Ephemeris.geocentricLongitude(selected, days: d)
         let end = Self.ecliptic(lon, radius: Self.zodiacRadius - Self.bandWidth / 2)
-        // A thin glowing beam from Earth to the dial.
-        let dx = end.x - earth.x, dy = end.y - earth.y, dz = end.z - earth.z
-        let length = sqrt(dx * dx + dy * dy + dz * dz)
-        let cam = (pointOfView ?? cameraNode).presentation.position
-        let camDist = sqrt(pow(cam.x - earth.x, 2) + pow(cam.y - earth.y, 2) + pow(cam.z - earth.z, 2))
-        let beam = SCNCylinder(radius: CGFloat(min(max(camDist * 0.0012, 0.008), 0.05)), height: CGFloat(length))
-        let bm = SCNMaterial()
-        bm.lightingModel = .constant
-        bm.diffuse.contents = UIColor(Theme.gold)
-        bm.emission.contents = UIColor(Theme.gold)
-        bm.emission.intensity = 0.9
-        beam.materials = [bm]
-        sightline.geometry = beam
-        sightline.position = SCNVector3(earth.x + dx / 2, earth.y + dy / 2, earth.z + dz / 2)
-        // Point the cylinder (y-axis) along the beam.
-        sightline.look(at: end, up: SCNVector3(0, 1, 0), localFront: SCNVector3(0, 1, 0))
+        // A fine line of sight: bright from Earth to the planet, then fading out on its way to the dial,
+        // so it never looks like a laser shooting off to infinity.
+        // Distances are squashed to fit, so the true direction doesn't pass exactly through the drawn planet.
+        // Run the line through the planet itself, then on to the planet's exact degree on the dial.
+        let mid = bodyNodes[selected]?.position ?? earth
+        let gold = SIMD4<Float>(0.91, 0.76, 0.48, 1)
+        func at(_ f: Float) -> SCNVector3 { SCNVector3(mid.x + (end.x - mid.x) * f, mid.y + (end.y - mid.y) * f, mid.z + (end.z - mid.z) * f) }
+        var pts: [SCNVector3] = [earth, mid]
+        var alphas: [Float] = [0.35, 0.95]
+        for k in 1...12 {
+            let f = Float(k) / 12
+            pts.append(at(f))
+            alphas.append(0.95 * pow(1 - f, 1.6) + 0.12 * f)
+        }
+        sightline.geometry = fadingLine(pts, colors: alphas.map { gold * $0 })
+        sightline.position = SCNVector3Zero
+        sightline.orientation = SCNVector4(0, 0, 0, 1)
         sightline.isHidden = false
 
         let signIndex = Int(lon / 30) % 12
@@ -406,7 +407,7 @@ final class CosmosScene {
         // A small marker where the line meets the dial: the exact degree.
         let tickIn = Self.ecliptic(lon, radius: Self.zodiacRadius - Self.bandWidth / 2)
         let tickOut = Self.ecliptic(lon, radius: Self.zodiacRadius + Self.bandWidth / 2)
-        signHighlight.geometry = lineGeometry([tickIn, tickOut], color: UIColor(Theme.gold))
+        signHighlight.geometry = lineGeometry([tickIn, tickOut], color: UIColor(Theme.gold).withAlphaComponent(0.9))
         signHighlight.isHidden = false
         updateRetroArc(selected, days: d)
         highlightedSign = signIndex
@@ -455,6 +456,25 @@ final class CosmosScene {
         let m = SCNMaterial()
         m.lightingModel = .constant
         m.diffuse.contents = UIColor.white
+        g.materials = [m]
+        return g
+    }
+
+    /// A line strip whose colour (premultiplied, additive) changes along its length.
+    private func fadingLine(_ points: [SCNVector3], colors: [SIMD4<Float>]) -> SCNGeometry {
+        let colorData = colors.map { SIMD4<Float>($0.x, $0.y, $0.z, 1) }.withUnsafeBufferPointer { Data(buffer: $0) }
+        let colorSource = SCNGeometrySource(data: colorData, semantic: .color, vectorCount: colors.count,
+                                            usesFloatComponents: true, componentsPerVector: 4,
+                                            bytesPerComponent: 4, dataOffset: 0, dataStride: 16)
+        var idx: [Int32] = []
+        for i in 0..<(points.count - 1) { idx += [Int32(i), Int32(i + 1)] }
+        let g = SCNGeometry(sources: [SCNGeometrySource(vertices: points), colorSource],
+                            elements: [SCNGeometryElement(indices: idx, primitiveType: .line)])
+        let m = SCNMaterial()
+        m.lightingModel = .constant
+        m.diffuse.contents = UIColor.white
+        m.blendMode = .add
+        m.writesToDepthBuffer = false
         g.materials = [m]
         return g
     }

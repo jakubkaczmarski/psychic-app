@@ -26,6 +26,8 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     var seen: Bool? = nil
     /// A reply sent after the free messages ran out: shown blurred until Moonlit+ is unlocked.
     var locked: Bool? = nil
+    /// A locked bubble that stands in for a reply not fetched yet: it's fetched once Moonlit+ is unlocked.
+    var awaitingReply: Bool? = nil
 }
 
 struct Psychic: Identifiable, Hashable {

@@ -57,7 +57,7 @@ private struct ReadingRow: View {
     private var preview: String {
         guard let last = messages.last(where: { !$0.text.isEmpty }) else { return "" }
         if last.role == .card, let card = last.card { return "Drew \(card.name)" }
-        if last.locked == true { return "🔒 \(psychic.short) replied. Unlock to read it." }
+        if last.locked == true { return "🔒 Unlock to read \(psychic.short)'s reply." }
         return last.text
     }
 

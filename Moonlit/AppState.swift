@@ -124,10 +124,29 @@ final class AppState: ObservableObject {
     func unlockPlus() {
         isPlus = true
         lockedDay = nil
-        for (id, thread) in threads where thread.contains(where: { $0.locked == true }) {
-            threads[id] = thread.map { var m = $0; m.locked = nil; return m }
+        var owed: [Psychic] = []
+        for p in Catalog.psychics {
+            guard let thread = threads[p.id], thread.contains(where: { $0.locked == true }) else { continue }
+            // A stand-in at the end of a thread is a question still waiting for its answer.
+            if thread.last?.awaitingReply == true { owed.append(p) }
+            threads[p.id] = thread.filter { $0.awaitingReply != true }
+                .map { var m = $0; m.locked = nil; return m }
+        }
+        guard !owed.isEmpty else { return }
+        Task {
+            for p in owed {
+                // One reply at a time, like everywhere else.
+                while answeringFor != nil { try? await Task.sleep(for: .seconds(0.3)) }
+                guard let thread = threads[p.id], let asked = thread.lastIndex(where: { $0.role == .user }) else { continue }
+                answeringFor = p.id
+                await reply(as: p, to: thread[asked].text,
+                            ritual: thread[asked...].contains { $0.role == .ritual }, locked: false, usedFree: false)
+            }
         }
     }
+
+    /// Shown blurred in place of a locked reply. Says nothing a reading would, in case it's read through the blur.
+    static let lockedReplyStandIn = "Your reading is waiting for you. Unlock Moonlit+ and I'll tell you everything the signs are showing me about this."
 
     #if DEBUG
     func resetPlusForTesting() {
@@ -332,8 +351,14 @@ final class AppState: ObservableObject {
 
     /// Replies like a person texting: reads the message ("Seen"), types, and sends
     /// the reply as a few short bubbles at the psychic's own typing speed.
-    /// A `locked` reply is fetched and "typed" as usual but shown blurred until Moonlit+ is unlocked.
+    /// A `locked` reply isn't fetched: a blurred stand-in is "typed" instead, and the real reply
+    /// is fetched once Moonlit+ is unlocked (see `unlockPlus`), so locked replies cost nothing.
     private func respond(as p: Psychic, to question: String, ritual: Ritual?, locked: Bool, usedFree: Bool) {
+        answeringFor = p.id
+        Task { await reply(as: p, to: question, ritual: ritual != nil, locked: locked, usedFree: usedFree) }
+    }
+
+    private func reply(as p: Psychic, to question: String, ritual: Bool, locked: Bool, usedFree: Bool) async {
         let history = apiTurns(for: p)
         let memory = memoryNotes(for: p)
         let userMessageID = threads[p.id]?.last(where: { $0.role == .user })?.id
@@ -348,47 +373,61 @@ final class AppState: ObservableObject {
             if usedFree, freeDay == Daily.dayKey() { freeUsed = max(0, freeUsed - 1) }
         }
 
-        Task {
-            defer { answeringFor = nil; typingFor = nil }
-            let started = Date()
+        defer { answeringFor = nil; typingFor = nil }
+        let started = Date()
 
-            // Fetch the reply while the psychic "reads" the message.
-            async let fetched = fetchReply(p, question: question, ritual: ritual != nil,
-                                           history: history, memory: memory, name: name, sign: sign)
+        if locked, !isPlus {
+            // No request is made: the psychic "reads" and "types", then the stand-in appears.
             try? await Task.sleep(for: .seconds(Double.random(in: style.readDelay)))
             if let userMessageID { update(p.id, userMessageID) { $0.seen = true } }
             try? await Task.sleep(for: .seconds(0.4))
             typingFor = p.id
+            try? await Task.sleep(for: .seconds(Double.random(in: 1.5...3)))
+            // Moonlit+ may have been unlocked while "typing": then fetch the real reply.
+            if isPlus {
+                typingFor = nil
+                await reply(as: p, to: question, ritual: ritual, locked: false, usedFree: false)
+                return
+            }
+            threads[p.id, default: []].append(ChatMessage(role: .psychic, text: Self.lockedReplyStandIn,
+                                                          locked: true, awaitingReply: true))
+            lockedDay = Daily.dayKey()
+            Analytics.track(.replyLocked, ["psychic": p.id])
+            return
+        }
 
-            switch await fetched {
-            case .success(let text):
-                let parts = Self.bubbles(from: text)
-                guard !parts.isEmpty else {
-                    threads[p.id, default: []].append(ChatMessage(role: .psychic, text: "…the vision faded. Ask me again?", isError: true))
-                    refund()
-                    return
-                }
-                for (i, part) in parts.enumerated() {
-                    // Time to type this bubble; the first one counts time already spent waiting.
-                    var wait = min(max(Double(part.count) / style.typingSpeed, 0.6), 4.5)
-                    if i == 0 { wait -= Date().timeIntervalSince(started) - style.readDelay.lowerBound }
-                    typingFor = p.id
-                    if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
-                    threads[p.id, default: []].append(ChatMessage(role: .psychic, text: part, locked: locked && !isPlus ? true : nil))
-                    if i < parts.count - 1 {
-                        typingFor = nil
-                        try? await Task.sleep(for: .seconds(Double.random(in: 0.3...0.8)))
-                    }
-                }
-            case .failure(let error):
-                let note = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-                threads[p.id, default: []].append(ChatMessage(role: .psychic, text: note, isError: true))
+        // Fetch the reply while the psychic "reads" the message.
+        async let fetched = fetchReply(p, question: question, ritual: ritual,
+                                       history: history, memory: memory, name: name, sign: sign)
+        try? await Task.sleep(for: .seconds(Double.random(in: style.readDelay)))
+        if let userMessageID { update(p.id, userMessageID) { $0.seen = true } }
+        try? await Task.sleep(for: .seconds(0.4))
+        typingFor = p.id
+
+        switch await fetched {
+        case .success(let text):
+            let parts = Self.bubbles(from: text)
+            guard !parts.isEmpty else {
+                threads[p.id, default: []].append(ChatMessage(role: .psychic, text: "…the vision faded. Ask me again?", isError: true))
                 refund()
+                return
             }
-            if locked, threads[p.id]?.last?.locked == true {
-                lockedDay = Daily.dayKey()
-                Analytics.track(.replyLocked, ["psychic": p.id])
+            for (i, part) in parts.enumerated() {
+                // Time to type this bubble; the first one counts time already spent waiting.
+                var wait = min(max(Double(part.count) / style.typingSpeed, 0.6), 4.5)
+                if i == 0 { wait -= Date().timeIntervalSince(started) - style.readDelay.lowerBound }
+                typingFor = p.id
+                if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
+                threads[p.id, default: []].append(ChatMessage(role: .psychic, text: part))
+                if i < parts.count - 1 {
+                    typingFor = nil
+                    try? await Task.sleep(for: .seconds(Double.random(in: 0.3...0.8)))
+                }
             }
+        case .failure(let error):
+            let note = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            threads[p.id, default: []].append(ChatMessage(role: .psychic, text: note, isError: true))
+            refund()
         }
     }
 
@@ -470,7 +509,8 @@ final class AppState: ObservableObject {
         }
         let all = threads[p.id] ?? []
         let thread = Array(all[visitStart(in: all)...].suffix(30))
-        for (i, m) in thread.enumerated() where !m.isError {
+        // A locked stand-in isn't something the psychic said.
+        for (i, m) in thread.enumerated() where !m.isError && m.awaitingReply != true {
             // Drop a question whose reply failed, so it isn't answered again later.
             if m.role == .user,
                let reply = thread[(i + 1)...].first(where: { $0.role == .psychic && !$0.text.isEmpty }),

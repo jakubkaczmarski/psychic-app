@@ -133,11 +133,11 @@ struct PaywallView: View {
     private var pitch: String {
         if lockedReply {
             let lines: [String: String] = [
-                "selene": "I've answered you, darling. It's waiting under the moonlight.",
-                "kaz": "Reply's sent. It's behind the paywall. Your call.",
-                "ivy": "I've written you a proper answer, love. It's just there, under the tea towel.",
-                "zephyr": "i replied!! the ball made me. it's right there",
-                "mirela": "I've answered you, my dear. Come, read it.",
+                "selene": "Your answer is waiting under the moonlight, darling.",
+                "kaz": "Your answer's behind the paywall. Your call.",
+                "ivy": "I've a proper answer for you, love. It's just there, under the tea towel.",
+                "zephyr": "the ball has your answer!! it's right there",
+                "mirela": "I have your answer, my dear. Come, read it.",
             ]
             return lines[psychic.id] ?? lines["selene"]!
         }

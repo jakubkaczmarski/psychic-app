@@ -293,7 +293,7 @@ struct MessageRow: View {
                         }
                         .accessibilityElement(children: .combine)
                     } else if message.locked == true {
-                        // The real reply, blurred until Moonlit+ is unlocked.
+                        // A stand-in for the reply, blurred; the real one is fetched once Moonlit+ is unlocked.
                         Text(message.text)
                             .font(.system(size: 16))
                             .foregroundStyle(Theme.text)

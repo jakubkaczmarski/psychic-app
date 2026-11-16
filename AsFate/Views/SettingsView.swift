@@ -1,12 +1,17 @@
+import StoreKit
 import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject var app: AppState
+    @EnvironmentObject var store: Store
     @Environment(\.dismiss) private var dismiss
     @State private var confirmClear = false
     @State private var checking = false
     @State private var notificationsBlocked = false
     @State private var showPaywall = false
+    @State private var manageSubscription = false
+    @State private var restoring = false
+    @State private var restoreMessage: String?
 
     private var status: (icon: String, color: Color, text: String) {
         if !app.isLive { return ("wand.and.stars", Theme.gold, "Demo mode: replies are pre-written") }
@@ -84,9 +89,12 @@ struct SettingsView: View {
                 Section {
                     if app.isPlus {
                         Label("Fate+ is on", systemImage: "sparkles")
+                        Button("Manage subscription") { manageSubscription = true }
                     } else {
                         Text("\(app.freeMessagesLeft) of \(AppState.freeMessagesPerDay) free messages left today")
                         Button("Get Fate+") { showPaywall = true }
+                        Button(restoring ? "Restoring…" : "Restore purchases") { Task { await restore() } }
+                            .disabled(restoring)
                     }
                     #if DEBUG
                     Button("Debug: reset Fate+ and free messages") { app.resetPlusForTesting() }
@@ -124,11 +132,36 @@ struct SettingsView: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
             }
+            .manageSubscriptionsSheet(isPresented: $manageSubscription)
+            .alert("Fate+", isPresented: Binding(get: { restoreMessage != nil }, set: { if !$0 { restoreMessage = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(restoreMessage ?? "")
+            }
             .sheet(isPresented: $showPaywall) {
                 PaywallView(psychic: app.matchedPsychic, goal: app.onboardingGoal,
                             name: app.userName.trimmingCharacters(in: .whitespaces), source: "settings") { showPaywall = false }
             }
         }
         .preferredColorScheme(.light)
+    }
+
+    private func restore() async {
+        Analytics.track(.paywallRestoreTapped, ["source": "settings"])
+        restoring = true
+        defer { restoring = false }
+        switch await store.restore() {
+        case .restored:
+            Analytics.track(.restored, ["source": "settings", "found": "true"])
+            restoreMessage = "Fate+ is back on. Welcome back."
+        case .nothingFound:
+            Analytics.track(.restored, ["source": "settings", "found": "false"])
+            restoreMessage = "No Fate+ subscription was found for this Apple Account."
+        case .cancelled:
+            break
+        case .failed(let reason):
+            Analytics.track(.restored, ["source": "settings", "found": "false", "reason": reason])
+            restoreMessage = "Purchases couldn't be restored. Check your connection and try again."
+        }
     }
 }

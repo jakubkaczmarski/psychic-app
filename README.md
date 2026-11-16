@@ -36,7 +36,7 @@ A questionnaire-style first run (`AsFate/Views/Onboarding/`):
 5. A short "Reading your stars…" moment
 6. **Try it:** tap 3 face-down tarot cards for past, present and future
 7. The spread, a matched psychic (picked from the goal) and a shareable image
-8. A paywall personalised for each user (closable; the purchase itself is still a StoreKit TODO in `PaywallView.swift`)
+8. A paywall personalised for each user (closable), with real StoreKit 2 purchases
 
 Finishing opens the matched psychic, who reads the spread live using the goal and pain points as context. Settings has **Replay onboarding**.
 
@@ -47,7 +47,7 @@ The paywall at the end of onboarding is built from the user's own answers instea
 - A headline with their name: "Alex, keep Selene on call".
 - The three cards they just drew, with "Up next: Selene reads all three for you."
 - Benefits that name their psychic, their topic and that psychic's ritual, then the other four psychics.
-- The price under the button ("Free for 3 days, then $29.99/year. Cancel anytime.").
+- The price under the button ("Free for 3 days, then $29.99/year. Cancel anytime."), taken from the App Store in the user's currency. The trial is only offered to people who can still get it.
 
 The second-person topic for each goal is `yourTopic` in `OnboardingCatalog.goals`; the voice lines and ritual benefits are in `PaywallView.swift`. The made-up review was removed: Apple rejects apps that show invented reviews.
 
@@ -59,8 +59,20 @@ Without Fate+ you get **3 free messages a day** (`AppState.freeMessagesPerDay`).
 - Once the locked reply has arrived, the input is replaced by "You've used today's 3 free messages. More tomorrow, or unlock unlimited readings now." So at most one reply a day is locked. The limit resets the next day.
 - If the reply fails, the free message is given back and nothing is locked.
 - The paywall opened from a locked reply says "Read Selene's reply", with a line in the psychic's voice ("Your answer is waiting under the moonlight, darling.").
-- **Placeholder:** "Start my free trial" unlocks Fate+ (`AppState.unlockPlus()`) without charging anything, so testers can try both sides. Replace it with a verified StoreKit purchase before release. Settings shows the free messages left and, in debug builds, **Debug: reset Fate+ and free messages**.
+- Settings shows the free messages left, **Restore purchases** and, with Fate+, **Manage subscription**. Debug builds add **Debug: reset Fate+ and free messages**.
 - The limit is kept on the phone, so reinstalling resets it. Enforce it on the server (per device and per subscription) once purchases are real.
+
+### Fate+ subscriptions (StoreKit 2)
+`AsFate/Store.swift` loads the products, buys and restores them, and listens for renewals, refunds and Ask to Buy approvals. `AppState.isPlus` follows the App Store's verified entitlements, checked at launch and on every change; when a subscription ends, Fate+ turns off again.
+
+| Product ID | Plan |
+| --- | --- |
+| `com.jakubkaczmarski.asfate.plus.yearly` | $29.99/year with a 3-day free trial |
+| `com.jakubkaczmarski.asfate.plus.weekly` | $4.99/week |
+
+- **Test purchases:** run the **AsFate** scheme from Xcode. The shared scheme uses `AsFate.storekit`, so purchases, trials, renewals and refunds work locally without App Store Connect and nothing is charged. Use **Debug → StoreKit → Manage Transactions** in Xcode to refund or expire them.
+- **Launched outside Xcode** (for example with `simctl`), StoreKit has no products. The paywall then shows the default prices, and debug builds unlock Fate+ locally when you tap the button (`debugPlus`; cleared by the debug reset). Release builds never do this: they say the purchase isn't available.
+- **Before release:** create a subscription group "Fate+" with both products in App Store Connect, using the same IDs, prices and trial. Then test once with a Sandbox account on a real device.
 
 ### Analytics
 Funnel events go to [TelemetryDeck](https://telemetrydeck.com) (`AsFate/Analytics.swift`), which collects no personal data, so no consent banner is needed. **Setup:** create an app in TelemetryDeck and paste its App ID into `Analytics.appID`. Until then nothing is sent, and debug builds print each event to the Xcode console (`[analytics] Paywall.shown …`). Debug builds send in test mode, so they don't mix with real users.
@@ -69,10 +81,14 @@ Funnel events go to [TelemetryDeck](https://telemetrydeck.com) (`AsFate/Analytic
 | --- | --- | --- |
 | `Onboarding.stepViewed` | Each onboarding screen | `step` (`0_welcome` … `7_paywall`), `goal` |
 | `Onboarding.completed` | Leaving onboarding | `goal`, `psychic`, `painCount` |
-| `Paywall.shown` / `planSelected` / `ctaTapped` / `restoreTapped` | Paywall actions | `source`, `psychic`, `goal`, `plan` |
+| `Paywall.shown` / `planSelected` / `ctaTapped` / `restoreTapped` | Paywall actions | `source`, `psychic`, `goal`, `plan`, `trialEligible` |
 | `Paywall.dismissed` | Close or "Not now" | the above, plus `how` and `seconds` |
 | | `source` is `onboarding`, `lockedReply`, `limitBar`, `freeHint` or `settings` | |
-| `Purchase.trialStarted` / `Purchase.completed` | Defined, not sent yet: add them when StoreKit is wired up | |
+| `Paywall.productsUnavailable` | The App Store returned no products | as `Paywall.shown` |
+| `Purchase.trialStarted` / `Purchase.completed` | A verified yearly trial / any other purchase | paywall parameters, `productID`, `seconds` |
+| `Purchase.cancelled` / `Purchase.pending` / `Purchase.failed` | The purchase sheet was closed, waits for approval, or failed | paywall parameters, `seconds`; `reason` on failures |
+| `Purchase.restored` | Restore finished | `source`, `found`; `reason` on failures |
+| `Purchase.subscriptionEnded` | Fate+ was on and the entitlement is gone (expired, refunded) | |
 | `Chat.firstMessageSent` | The first message ever | as `Chat.messageSent` |
 | `Chat.messageSent` | Every message | `psychic`, `messageInVisit`, `ritual`, `live`, `daysSinceInstall` |
 | `Chat.visitStarted` | New thread or a welcome back after 6 h | `psychic`, `returning` |
@@ -80,6 +96,8 @@ Funnel events go to [TelemetryDeck](https://telemetrydeck.com) (`AsFate/Analytic
 | `App.activeDay` | Once per calendar day the app is opened | `daysSinceInstall`, `week` |
 | `Daily.cardRevealed` | Turning the card of the day | `streak` |
 | `Daily.morningMessagesAnswered` | The notification permission answer | `granted` |
+
+**Every event** also carries the user's onboarding answers and a few counters (`Analytics.context`): `goal`, `pains` (sorted IDs, such as `overthink,signals`), `painCount`, `sign`, `psychic`, `onboardingVersion`, `isPlus` and `paywallViews`. So any event can be split by them. For example, filter `Purchase.trialStarted` by `pains` to see which answers convert best, or break `Paywall.shown → Purchase.trialStarted` down by `source` to see which paywall sells. Bump `Analytics.onboardingVersion` whenever you change the onboarding or paywall, so you can compare conversion before and after. Successful purchases also send TelemetryDeck's built-in purchase signal, which fills its revenue and trial dashboards.
 
 Day 1 and day 7 retention are the share of installs that send `App.activeDay` with `daysSinceInstall` 1 and 7. Messages per visit come from the highest `messageInVisit`. Never add names, questions or chat text as parameters.
 
@@ -172,7 +190,9 @@ The server runs on any Node 22.18+ host with `npm start`; Railway, Render and Fl
 | `AsFate/Models.swift` | The five psychics (bio, greeting, demo lines), star signs and the tarot deck |
 | `AsFate/AppState.swift` | Navigation, saved readings (UserDefaults), visits and memory notes, and turning the chat into turns for the server |
 | `AsFate/Cosmos/` | Cosmic view: planet positions (`Ephemeris`), the 3D scene and the screen with the time scrubber |
-| `AsFate/Analytics.swift` | Funnel events sent to TelemetryDeck |
+| `AsFate/Analytics.swift` | Funnel events sent to TelemetryDeck, with the onboarding answers on every event |
+| `AsFate/Store.swift` | Fate+ subscriptions with StoreKit 2: products, purchase, restore and entitlements |
+| `AsFate.storekit` | Local StoreKit test products, used when running the **AsFate** scheme from Xcode |
 | `AsFate/Daily.swift` | Card of the day, daily moods and morning-message text |
 | `AsFate/MorningMessages.swift` | Schedules local morning notifications and handles taps on them |
 | `AsFate/Views/DailyViews.swift` | Card-of-the-day tile and the morning-message explainer |
@@ -183,6 +203,9 @@ The server runs on any Node 22.18+ host with `npm start`; Railway, Render and Fl
 | `AsFate/Resources/` | Psychic portraits, and planet textures in `Planets/` (CC BY 4.0, Solar System Scope) |
 
 ## Before a public release
+
+- Create the Fate+ products in App Store Connect and paste a TelemetryDeck App ID into `Analytics.appID`.
+- Add links to your Terms of Use (EULA) and Privacy Policy on the paywall and in the App Store description: Apple requires them for subscriptions.
 
 - Deploy the server over HTTPS and point the app at it.
 - Add real user accounts or App Attest if you need stronger protection than per-device limits.

@@ -1,17 +1,12 @@
+import StoreKit
 import SwiftUI
 
 /// Paywall shown at the end of onboarding, personalised with the user's psychic, goal and spread.
-/// The purchase itself is still a placeholder.
-///
-/// TODO: Connect StoreKit 2 before release:
-///   1. Create the products in App Store Connect (IDs below are placeholders).
-///   2. Load them with `Product.products(for:)` and show `displayPrice` instead of the hard-coded prices.
-///   3. Call `product.purchase()` in `startTrial()`, verify the transaction and finish it.
-///   4. Check `Transaction.currentEntitlements` at launch and implement `restore()` with `AppStore.sync()`.
-///   5. Decide what Moonlit+ unlocks (for example, raise the server's daily limit for subscribers).
-/// Until then every button simply continues into the app; nothing is charged.
+/// Prices and purchases come from StoreKit (see `Store`); every outcome is sent to analytics
+/// with the paywall's source, plan and the user's onboarding answers.
 struct PaywallView: View {
     @EnvironmentObject var app: AppState
+    @EnvironmentObject var store: Store
     let psychic: Psychic
     var goal: OnboardingGoal? = nil
     /// The three cards drawn in onboarding, shown as "your reading so far".
@@ -26,10 +21,23 @@ struct PaywallView: View {
     enum Plan: String { case yearly, weekly }
     @State private var plan: Plan = .yearly
     @State private var shownAt = Date()
+    @State private var busy = false
+    @State private var message: String?
 
-    // TODO: Replace with real products and prices from StoreKit.
-    private static let yearlyProductID = "com.example.moonlit.plus.yearly"
-    private static let weeklyProductID = "com.example.moonlit.plus.weekly"
+    private var yearly: Product? { store.products[Store.yearlyID] }
+    private var weekly: Product? { store.products[Store.weeklyID] }
+    private var selectedProduct: Product? { plan == .yearly ? yearly : weekly }
+
+    /// "3 days free" when the yearly plan has a trial this user can still get.
+    private var trial: String? {
+        guard store.trialEligible else { return nil }
+        guard let yearly else { return "3 days free" }  // until StoreKit answers
+        return yearly.freeTrialText
+    }
+    // Shown until StoreKit answers (and if it never does); the App Store prices replace them.
+    private var yearlyPrice: String { yearly?.displayPrice ?? "$29.99" }
+    private var weeklyPrice: String { weekly?.displayPrice ?? "$4.99" }
+    private var isTrial: Bool { plan == .yearly && trial != nil }
 
     /// The user's goal when it belongs to this psychic, otherwise what the psychic is known for.
     private var topic: String {
@@ -67,8 +75,10 @@ struct PaywallView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                     VStack(spacing: 10) {
-                        planRow(.yearly, title: "Yearly", detail: "3 days free, then $29.99/year", badge: "Best value")
-                        planRow(.weekly, title: "Weekly", detail: "$4.99/week", badge: nil)
+                        planRow(.yearly, title: "Yearly",
+                                detail: trial.map { "\($0), then \(yearlyPrice)/year" } ?? "\(yearlyPrice)/year",
+                                badge: "Best value")
+                        planRow(.weekly, title: "Weekly", detail: "\(weeklyPrice)/week", badge: nil)
                     }
                 }
                 .padding(.horizontal, 24)
@@ -76,24 +86,53 @@ struct PaywallView: View {
             }
 
             OnboardingFooter {
-                Button(plan == .yearly ? "Start my free trial" : "Continue", action: startTrial)
-                    .buttonStyle(GoldButtonStyle())
+                Button { Task { await buy() } } label: {
+                    if busy {
+                        ProgressView().tint(Theme.onGold)
+                    } else {
+                        Text(isTrial ? "Start my free trial" : "Continue")
+                    }
+                }
+                .buttonStyle(GoldButtonStyle())
+                .disabled(busy)
                 HStack(spacing: 18) {
-                    Button("Restore purchases", action: restore)
+                    Button("Restore purchases") { Task { await restore() } }
                     Button("Not now") { dismiss("notNow") }
                 }
                 .font(.system(size: 14))
                 .foregroundStyle(Theme.muted)
                 .frame(minHeight: 40)
-                Text(plan == .yearly ? "Free for 3 days, then $29.99/year. Cancel anytime." : "Cancel anytime. For entertainment only.")
+                .disabled(busy)
+                Text(finePrint)
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.faint)
+                    .multilineTextAlignment(.center)
             }
         }
         .background(Theme.bg.ignoresSafeArea())
         .onAppear {
             shownAt = Date()
+            Analytics.paywallViewed()
             Analytics.track(.paywallShown, analyticsParams)
+        }
+        .task {
+            if store.products.isEmpty { await store.loadProducts() }
+            if store.unavailable { Analytics.track(.productsUnavailable, analyticsParams) }
+        }
+        .alert("Fate+", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(message ?? "")
+        }
+    }
+
+    private var finePrint: String {
+        switch plan {
+        case .yearly:
+            if let trial { return "\(trial.prefix(1).uppercased() + trial.dropFirst()), then \(yearlyPrice)/year. Cancel anytime." }
+            return "\(yearlyPrice)/year. Cancel anytime."
+        case .weekly:
+            return "\(weeklyPrice)/week. Cancel anytime. For entertainment only."
         }
     }
 
@@ -211,7 +250,8 @@ struct PaywallView: View {
     // MARK: Analytics
 
     private var analyticsParams: [String: String] {
-        ["source": source, "psychic": psychic.id, "goal": goal?.id ?? "none", "plan": plan.rawValue]
+        ["source": source, "psychic": psychic.id, "goal": goal?.id ?? "none", "plan": plan.rawValue,
+         "trialEligible": String(store.trialEligible)]
     }
 
     private func dismiss(_ how: String) {
@@ -256,18 +296,63 @@ struct PaywallView: View {
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
-    private func startTrial() {
+    private var secondsOnPaywall: String { String(Int(Date().timeIntervalSince(shownAt))) }
+
+    private func buy() async {
         Analytics.track(.paywallCTATapped, analyticsParams)
-        // TODO: Purchase `plan == .yearly ? Self.yearlyProductID : Self.weeklyProductID` with StoreKit 2,
-        // then send `.trialStarted` (yearly) or `.purchased` (weekly) with `analyticsParams`.
-        // Placeholder: nothing is charged and Moonlit+ simply unlocks.
-        app.unlockPlus()
-        onFinish()
+        var params = analyticsParams
+        params["seconds"] = secondsOnPaywall
+
+        guard let product = selectedProduct else {
+            #if DEBUG
+            // No StoreKit products here (launched outside Xcode, or not in App Store Connect yet).
+            print("[store] StoreKit products unavailable: unlocking Fate+ locally (debug builds only).")
+            app.unlockPlusForTesting()
+            onFinish()
+            #else
+            Analytics.track(.purchaseFailed, params.merging(["reason": "productsUnavailable"]) { $1 })
+            message = "Fate+ can't be bought right now. Check your connection and try again."
+            #endif
+            return
+        }
+
+        busy = true
+        defer { busy = false }
+        switch await store.purchase(product) {
+        case .purchased(let transaction):
+            let trialStarted = isTrial
+            params["productID"] = product.id
+            Analytics.track(trialStarted ? .trialStarted : .purchased, params)
+            Analytics.trackPurchase(transaction, params)
+            onFinish()
+        case .cancelled:
+            Analytics.track(.purchaseCancelled, params)
+        case .pending:
+            Analytics.track(.purchasePending, params)
+            message = "Your purchase is waiting for approval. Fate+ turns on as soon as it's approved."
+        case .failed(let reason):
+            params["reason"] = reason
+            Analytics.track(.purchaseFailed, params)
+            message = "The purchase didn't go through. Nothing was charged. Please try again."
+        }
     }
 
-    private func restore() {
+    private func restore() async {
         Analytics.track(.paywallRestoreTapped, analyticsParams)
-        // TODO: `try await AppStore.sync()`, then re-check entitlements.
-        onFinish()
+        busy = true
+        defer { busy = false }
+        switch await store.restore() {
+        case .restored:
+            Analytics.track(.restored, analyticsParams.merging(["found": "true"]) { $1 })
+            onFinish()
+        case .nothingFound:
+            Analytics.track(.restored, analyticsParams.merging(["found": "false"]) { $1 })
+            message = "No Fate+ subscription was found for this Apple Account."
+        case .cancelled:
+            break
+        case .failed(let reason):
+            Analytics.track(.restored, analyticsParams.merging(["found": "false", "reason": reason]) { $1 })
+            message = "Purchases couldn't be restored. Check your connection and try again."
+        }
     }
 }

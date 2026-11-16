@@ -91,6 +91,16 @@ struct OnboardingView: View {
         .background(Theme.bg.ignoresSafeArea())
         .onAppear { trackStep(step) }
         .onChange(of: step) { _, new in trackStep(new) }
+        // Keep the answers on every later event, so conversion can be split by them.
+        .onChange(of: goalID) { _, new in
+            Analytics.setContext("goal", new)
+            Analytics.setContext("psychic", match.id)
+        }
+        .onChange(of: pains) { _, new in
+            Analytics.setContext("pains", new.isEmpty ? nil : new.sorted().joined(separator: ","))
+            Analytics.setContext("painCount", String(new.count))
+        }
+        .onChange(of: app.sign) { _, new in Analytics.setContext("sign", new) }
     }
 
     /// One event per screen, numbered so the funnel sorts in order (`2_pains`).

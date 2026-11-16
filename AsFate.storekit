@@ -1,0 +1,85 @@
+{
+  "identifier" : "5B1E0C7A",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+
+  ],
+  "settings" : {
+    "_failTransactionsEnabled" : false,
+    "_locale" : "en_US",
+    "_storefront" : "USA",
+    "_storeKitErrors" : [
+
+    ]
+  },
+  "subscriptionGroups" : [
+    {
+      "id" : "21460001",
+      "localizations" : [
+
+      ],
+      "name" : "Fate+",
+      "subscriptions" : [
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "29.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "6740000001",
+          "introductoryOffer" : {
+            "internalID" : "6740000011",
+            "paymentMode" : "free",
+            "subscriptionPeriod" : "P3D"
+          },
+          "localizations" : [
+            {
+              "description" : "Unlimited readings with every psychic.",
+              "displayName" : "Fate+ Yearly",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "com.jakubkaczmarski.asfate.plus.yearly",
+          "recurringSubscriptionPeriod" : "P1Y",
+          "referenceName" : "Fate+ Yearly",
+          "subscriptionGroupID" : "21460001",
+          "type" : "RecurringSubscription"
+        },
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "4.99",
+          "familyShareable" : false,
+          "groupNumber" : 2,
+          "internalID" : "6740000002",
+          "localizations" : [
+            {
+              "description" : "Unlimited readings with every psychic.",
+              "displayName" : "Fate+ Weekly",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "com.jakubkaczmarski.asfate.plus.weekly",
+          "recurringSubscriptionPeriod" : "P1W",
+          "referenceName" : "Fate+ Weekly",
+          "subscriptionGroupID" : "21460001",
+          "type" : "RecurringSubscription"
+        }
+      ]
+    }
+  ],
+  "version" : {
+    "major" : 4,
+    "minor" : 0
+  }
+}

@@ -47,8 +47,8 @@ final class AppState: ObservableObject {
     /// The user said "Not now" to the morning-message prompt on the home screen.
     @Published var morningPromptDismissed: Bool { didSet { defaults.set(morningPromptDismissed, forKey: "morningPromptDismissed") } }
 
-    /// Moonlit+ is unlocked: no daily message limit.
-    /// TODO: Set from StoreKit's `Transaction.currentEntitlements` instead of the placeholder paywall.
+    /// Fate+ is unlocked: no daily message limit. Set from StoreKit's verified entitlements
+    /// (see `Store` and `setPlusEntitlement`); the saved value only covers the moment before the first check.
     @Published private(set) var isPlus: Bool { didSet { defaults.set(isPlus, forKey: "isPlus") } }
     /// Free messages used on `freeDay`.
     @Published private var freeUsed: Int { didSet { defaults.set(freeUsed, forKey: "freeUsed") } }
@@ -99,9 +99,9 @@ final class AppState: ObservableObject {
         lockedDay = defaults.string(forKey: "lockedDay")
     }
 
-    // MARK: Free messages and Moonlit+
+    // MARK: Free messages and Fate+
 
-    /// Messages a day without Moonlit+. The onboarding reading and the first question
+    /// Messages a day without Fate+. The onboarding reading and the first question
     /// about the card of the day don't count.
     static let freeMessagesPerDay = 3
 
@@ -119,9 +119,30 @@ final class AppState: ObservableObject {
     /// Today's free messages are gone and a reply was locked: the composer becomes the unlock bar.
     var isLimitReached: Bool { !isPlus && lockedDay == Daily.dayKey() }
 
-    /// Placeholder for a successful purchase: unlocks Moonlit+ and every locked reply.
-    /// TODO: Call only after StoreKit verifies a transaction.
-    func unlockPlus() {
+    /// Called with every StoreKit entitlement check: turns Fate+ on (unlocking waiting replies) or off.
+    func setPlusEntitlement(_ active: Bool) {
+        #if DEBUG
+        let active = active || defaults.bool(forKey: "debugPlus")
+        #endif
+        if active, !isPlus {
+            unlockPlus()
+        } else if !active, isPlus {
+            isPlus = false
+            Analytics.track(.subscriptionEnded)
+        }
+    }
+
+    #if DEBUG
+    /// Debug builds without StoreKit products (launched outside Xcode) unlock Fate+ locally,
+    /// so both sides of the paywall can still be tried. Never compiled into release builds.
+    func unlockPlusForTesting() {
+        defaults.set(true, forKey: "debugPlus")
+        unlockPlus()
+    }
+    #endif
+
+    /// Unlocks Fate+ and every locked reply. Only called after StoreKit verifies an entitlement.
+    private func unlockPlus() {
         isPlus = true
         lockedDay = nil
         var owed: [Psychic] = []
@@ -149,7 +170,10 @@ final class AppState: ObservableObject {
     static let lockedReplyStandIn = "Your reading is waiting for you. Unlock Fate+ and I'll tell you everything the signs are showing me about this."
 
     #if DEBUG
+    /// Clears the local debug unlock and the message counts. A real (sandbox or StoreKit-file)
+    /// subscription comes back at the next entitlement check; cancel it in the StoreKit transaction manager.
     func resetPlusForTesting() {
+        defaults.removeObject(forKey: "debugPlus")
         isPlus = false
         freeUsed = 0
         freeDay = nil
@@ -352,7 +376,7 @@ final class AppState: ObservableObject {
     /// Replies like a person texting: reads the message ("Seen"), types, and sends
     /// the reply as a few short bubbles at the psychic's own typing speed.
     /// A `locked` reply isn't fetched: a blurred stand-in is "typed" instead, and the real reply
-    /// is fetched once Moonlit+ is unlocked (see `unlockPlus`), so locked replies cost nothing.
+    /// is fetched once Fate+ is unlocked (see `unlockPlus`), so locked replies cost nothing.
     private func respond(as p: Psychic, to question: String, ritual: Ritual?, locked: Bool, usedFree: Bool) {
         answeringFor = p.id
         Task { await reply(as: p, to: question, ritual: ritual != nil, locked: locked, usedFree: usedFree) }
@@ -383,7 +407,7 @@ final class AppState: ObservableObject {
             try? await Task.sleep(for: .seconds(0.4))
             typingFor = p.id
             try? await Task.sleep(for: .seconds(Double.random(in: 1.5...3)))
-            // Moonlit+ may have been unlocked while "typing": then fetch the real reply.
+            // Fate+ may have been unlocked while "typing": then fetch the real reply.
             if isPlus {
                 typingFor = nil
                 await reply(as: p, to: question, ritual: ritual, locked: false, usedFree: false)

@@ -4,6 +4,7 @@ import SwiftUI
 struct AsFateApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var app = AppState()
+    @StateObject private var store = Store()
     @Environment(\.scenePhase) private var scenePhase
 
     init() { Analytics.start() }
@@ -12,6 +13,9 @@ struct AsFateApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(app)
+                .environmentObject(store)
+                // Fate+ follows the App Store's verified subscriptions, checked at launch and on every change.
+                .task { [app] in store.start { app.setPlusEntitlement($0) } }
                 .preferredColorScheme(.light)
                 .tint(Theme.gold)
                 // Tapping a morning message opens your psychic with today's card.

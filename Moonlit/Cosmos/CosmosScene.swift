@@ -156,7 +156,7 @@ final class CosmosScene {
         ring.name = "zodiac"
         let inner = Self.zodiacRadius - Self.bandWidth / 2, outer = Self.zodiacRadius + Self.bandWidth / 2
         // A dark dial band with alternating segments, one per sign, edged in fine gold like an instrument.
-        let gold = UIColor(Theme.gold)
+        let gold = UIColor(NightTheme.gold)
         for s in 0..<12 {
             let shade: CGFloat = s % 2 == 0 ? 0.07 : 0.035
             ring.addChildNode(bandSegment(from: Double(s) * 30, to: Double(s + 1) * 30, inner: inner, outer: outer,
@@ -384,10 +384,10 @@ final class CosmosScene {
         let size = CGSize(width: 256, height: 256)
         let image = UIGraphicsImageRenderer(size: size).image { ctx in
             let c = ctx.cgContext
-            c.setStrokeColor(UIColor(Theme.gold).cgColor)
+            c.setStrokeColor(UIColor(NightTheme.gold).cgColor)
             c.setLineWidth(5)
             c.strokeEllipse(in: CGRect(x: 14, y: 14, width: 228, height: 228))
-            c.setStrokeColor(UIColor(Theme.gold).withAlphaComponent(0.25).cgColor)
+            c.setStrokeColor(UIColor(NightTheme.gold).withAlphaComponent(0.25).cgColor)
             c.setLineWidth(14)
             c.strokeEllipse(in: CGRect(x: 14, y: 14, width: 228, height: 228))
         }
@@ -495,12 +495,12 @@ final class CosmosScene {
             signHighlight.addChildNode(bandSegment(from: Double(signIndex) * 30, to: Double(signIndex + 1) * 30,
                                                    inner: Self.zodiacRadius - Self.bandWidth / 2,
                                                    outer: Self.zodiacRadius + Self.bandWidth / 2,
-                                                   color: UIColor(Theme.gold).withAlphaComponent(0.16)))
+                                                   color: UIColor(NightTheme.gold).withAlphaComponent(0.16)))
         }
         // A small marker where the line meets the dial: the exact degree.
         let tickIn = Self.ecliptic(lon, radius: Self.zodiacRadius - Self.bandWidth / 2)
         let tickOut = Self.ecliptic(lon, radius: Self.zodiacRadius + Self.bandWidth / 2)
-        signHighlight.geometry = lineGeometry([tickIn, tickOut], color: UIColor(Theme.gold).withAlphaComponent(0.9))
+        signHighlight.geometry = lineGeometry([tickIn, tickOut], color: UIColor(NightTheme.gold).withAlphaComponent(0.9))
         signHighlight.isHidden = false
         updateRetroArc(selected, days: d)
         highlightedSign = signIndex

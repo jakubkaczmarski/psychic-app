@@ -36,6 +36,7 @@ struct HomeView: View {
                         .font(.system(size: 16))
                         .foregroundStyle(Theme.muted)
                         .lineSpacing(3)
+                    Flourish().padding(.top, 6)
                 }
 
                 DailyCardTile()
@@ -111,7 +112,7 @@ struct HomeView: View {
                                 .font(.system(size: 11, weight: .bold))
                                 .foregroundStyle(Theme.onGold)
                                 .frame(minWidth: 18, minHeight: 18)
-                                .background(Theme.gold, in: Capsule())
+                                .background(Theme.gold, in: Theme.chip)
                                 .offset(x: 3, y: -3)
                         }
                     }
@@ -148,8 +149,8 @@ struct HomeView: View {
                 Image(systemName: "bell.badge").foregroundStyle(Theme.gold)
             }
             .padding(14)
-            .background(Theme.surfaceRaised, in: RoundedRectangle(cornerRadius: 16))
-            .overlay(RoundedRectangle(cornerRadius: 16).stroke(Theme.gold.opacity(0.35), lineWidth: 1))
+            .background(Theme.surfaceRaised, in: RoundedRectangle(cornerRadius: Theme.radius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(Theme.gold.opacity(0.35), lineWidth: 1))
         }
         .buttonStyle(.plain)
     }
@@ -173,7 +174,7 @@ struct HomeView: View {
                 Image(systemName: "chevron.right").font(.system(size: 12)).foregroundStyle(Theme.faint)
             }
             .padding(.horizontal, 14).padding(.vertical, 12)
-            .background(Theme.surfaceRaised, in: RoundedRectangle(cornerRadius: 14))
+            .background(Theme.surfaceRaised, in: RoundedRectangle(cornerRadius: Theme.radius))
         }
         .buttonStyle(.plain)
     }

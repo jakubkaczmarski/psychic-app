@@ -12,7 +12,7 @@ struct MoonlitApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(app)
-                .preferredColorScheme(.dark)
+                .preferredColorScheme(.light)
                 .tint(Theme.gold)
                 // Tapping a morning message opens your psychic with today's card.
                 .onReceive(NotificationCenter.default.publisher(for: .openDailyCard)) { _ in

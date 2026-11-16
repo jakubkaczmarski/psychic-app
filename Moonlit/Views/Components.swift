@@ -23,32 +23,29 @@ struct AvatarView: View {
 struct Wordmark: View {
     var size: CGFloat = 28
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "moon.stars")
-                .font(.system(size: size * 0.7, weight: .regular))
-            Text("Moonlit").font(Theme.display(size))
-        }
-        .foregroundStyle(Theme.gold)
-        .accessibilityElement(children: .combine)
+        // The name is long: it shrinks to fit beside the header buttons.
+        Text("As Fate Would Have It")
+            .font(Theme.display(size))
+            .lineLimit(1)
+            .minimumScaleFactor(0.5)
+            .foregroundStyle(Theme.gold)
     }
 }
 
+/// A small face-up card, found by its numeral.
 struct MiniTarotCard: View {
     var numeral: String?
     var width: CGFloat = 48
 
     var body: some View {
-        VStack(spacing: 4) {
-            Image(systemName: "sparkle").font(.system(size: width * 0.38))
-            if let numeral, !numeral.isEmpty {
-                Text(numeral).font(Theme.display(width * 0.28))
+        Group {
+            if let card = Catalog.deck.first(where: { $0.numeral == numeral }) {
+                TarotArt(card: card, compact: true)
+            } else {
+                TarotBack()
             }
         }
-        .foregroundStyle(Theme.gold)
-        .frame(width: width, height: width * 1.5)
-        .background(Theme.cardFace, in: RoundedRectangle(cornerRadius: 7))
-        .overlay(RoundedRectangle(cornerRadius: 7).stroke(Theme.gold, lineWidth: 1.5))
-        .accessibilityHidden(true)
+        .frame(width: width, height: width / TarotArt.aspect)
     }
 }
 
@@ -75,7 +72,7 @@ struct Pill: View {
             .font(.system(size: 13))
             .foregroundStyle(Theme.textSoft)
             .padding(.horizontal, 14).padding(.vertical, 7)
-            .background(Theme.surfaceRaised, in: Capsule())
-            .overlay(Capsule().stroke(Theme.border, lineWidth: 1))
+            .background(Theme.surfaceRaised, in: Theme.chip)
+            .overlay(Theme.chip.stroke(Theme.border, lineWidth: 1))
     }
 }

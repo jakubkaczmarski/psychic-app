@@ -184,3 +184,7 @@ The server runs on any Node 22.18+ host with `npm start`; Railway, Render and Fl
 - Deploy the server over HTTPS and point the app at it.
 - Add real user accounts or App Attest if you need stronger protection than per-device limits.
 - Replace the 200 px portraits with full-resolution exports, add an app icon, and set your own bundle identifier and team.
+
+## Card artwork
+
+The tarot card faces are Pamela Colman Smith's illustrations for the Rider-Waite-Smith deck (1910), which are in the public domain. The scans come from Wikimedia Commons (`RWS Tarot 00 Fool.jpg` and the matching files for the other eleven cards), resized to 720 pixels wide in `Moonlit/Assets.xcassets/tarot_*.imageset`. A card without a scan falls back to the art drawn in `TarotArt.swift`.

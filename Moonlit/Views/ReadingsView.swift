@@ -16,7 +16,7 @@ struct ReadingsView: View {
                     VStack(spacing: 14) {
                         RoundedRectangle(cornerRadius: 10)
                             .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
-                            .foregroundStyle(Color(hex: 0x5C4C9E))
+                            .foregroundStyle(Theme.borderStrong)
                             .frame(width: 72, height: 108)
                             .overlay(Image(systemName: "sparkle").font(.system(size: 26)).foregroundStyle(Theme.faint))
                         Text("No readings yet").font(Theme.display(24)).foregroundStyle(Theme.textBright)
@@ -27,7 +27,7 @@ struct ReadingsView: View {
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundStyle(Theme.gold)
                             .padding(.horizontal, 24).frame(minHeight: 48)
-                            .overlay(Capsule().stroke(Theme.gold, lineWidth: 1))
+                            .overlay(Theme.chip.stroke(Theme.gold, lineWidth: 1))
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.top, 40)

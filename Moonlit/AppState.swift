@@ -146,7 +146,7 @@ final class AppState: ObservableObject {
     }
 
     /// Shown blurred in place of a locked reply. Says nothing a reading would, in case it's read through the blur.
-    static let lockedReplyStandIn = "Your reading is waiting for you. Unlock Moonlit+ and I'll tell you everything the signs are showing me about this."
+    static let lockedReplyStandIn = "Your reading is waiting for you. Unlock Fate+ and I'll tell you everything the signs are showing me about this."
 
     #if DEBUG
     func resetPlusForTesting() {

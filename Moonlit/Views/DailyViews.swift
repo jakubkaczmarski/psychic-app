@@ -18,7 +18,7 @@ struct DailyCardTile: View {
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Theme.gold)
                         .padding(.horizontal, 10).padding(.vertical, 4)
-                        .background(Theme.gold.opacity(0.12), in: Capsule())
+                        .background(Theme.gold.opacity(0.12), in: Theme.chip)
                         .accessibilityLabel("\(app.dailyStreak) day streak")
                 }
             }
@@ -28,7 +28,7 @@ struct DailyCardTile: View {
             } label: {
                 HStack(alignment: .top, spacing: 16) {
                     TarotTile(card: card, revealed: revealed, compact: true)
-                        .frame(width: 64)
+                        .frame(width: 84)
                     VStack(alignment: .leading, spacing: 6) {
                         if revealed {
                             Text(card.name).font(Theme.display(22)).foregroundStyle(Theme.gold)
@@ -61,7 +61,7 @@ struct DailyCardTile: View {
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(Theme.onGold)
                         .frame(maxWidth: .infinity, minHeight: 44)
-                        .background(Theme.gold, in: Capsule())
+                        .background(Theme.gold, in: Theme.chip)
                 }
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
@@ -118,8 +118,8 @@ struct MorningMessagesPrimer: View {
                         }
                     }
                     .padding(14)
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
-                    .overlay(RoundedRectangle(cornerRadius: 20).stroke(Theme.border, lineWidth: 1))
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: Theme.radius))
+                    .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(Theme.border, lineWidth: 1))
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel("Example message from \(p.name)")
 
@@ -159,7 +159,7 @@ struct MorningMessagesPrimer: View {
             }
         }
         .background(Theme.bg.ignoresSafeArea())
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
     }
 
     private func point(_ symbol: String, _ text: String) -> some View {

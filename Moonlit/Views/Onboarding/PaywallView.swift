@@ -114,7 +114,7 @@ struct PaywallView: View {
             }
             .padding(.horizontal, 16).padding(.vertical, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Theme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
 
             Text(headline)
                 .font(Theme.display(30, .medium))
@@ -242,14 +242,14 @@ struct PaywallView: View {
                         .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(Theme.onGold)
                         .padding(.horizontal, 10).padding(.vertical, 5)
-                        .background(Theme.gold, in: Capsule())
+                        .background(Theme.gold, in: Theme.chip)
                 }
             }
             .padding(.horizontal, 16)
             .frame(minHeight: 66)
-            .background(selected ? Color(hex: 0x2A2350) : Theme.surface,
-                        in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .background(selected ? Theme.surfaceSelected : Theme.surface,
+                        in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
                 .stroke(selected ? Theme.gold : Theme.border, lineWidth: selected ? 1.5 : 1))
         }
         .buttonStyle(.plain)

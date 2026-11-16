@@ -136,8 +136,8 @@ struct OnboardingView: View {
 
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    Capsule().fill(Theme.surfaceRaised)
-                    Capsule().fill(Theme.gold).frame(width: geo.size.width * progress)
+                    Theme.chip.fill(Theme.surfaceRaised)
+                    Theme.chip.fill(Theme.gold).frame(width: geo.size.width * progress)
                 }
             }
             .frame(height: 6)
@@ -245,9 +245,9 @@ struct OptionRow: View {
             }
             .padding(.horizontal, 18)
             .frame(maxWidth: .infinity, minHeight: 62)
-            .background(selected ? Color(hex: 0x2A2350) : Theme.surface,
-                        in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .background(selected ? Theme.surfaceSelected : Theme.surface,
+                        in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
                 .stroke(selected ? Theme.gold : Theme.border, lineWidth: selected ? 1.5 : 1))
             .contentShape(Rectangle())
         }

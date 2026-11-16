@@ -56,7 +56,7 @@ struct WelcomeStep: View {
                     .font(.system(size: 15))
                     .foregroundStyle(Theme.onGold)
                     .padding(.horizontal, 14).padding(.vertical, 10)
-                    .background(Theme.gold, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .background(Theme.gold, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
             }
             HStack(alignment: .bottom, spacing: 10) {
                 AvatarView(psychic: selene, size: 32)
@@ -67,7 +67,7 @@ struct WelcomeStep: View {
                         .foregroundStyle(Theme.text)
                 }
                 .padding(.horizontal, 14).padding(.vertical, 10)
-                .background(Theme.surfaceRaised, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .background(Theme.surfaceRaised, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
                 Spacer(minLength: 30)
             }
         }
@@ -167,8 +167,8 @@ struct YouStep: View {
                             .focused($nameFocused)
                             .padding(.horizontal, 18)
                             .frame(height: 52)
-                            .background(Theme.surface, in: RoundedRectangle(cornerRadius: 14))
-                            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.borderStrong, lineWidth: 1))
+                            .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.radius))
+                            .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(Theme.borderStrong, lineWidth: 1))
                             .foregroundStyle(Theme.textBright)
                     }
 
@@ -190,9 +190,9 @@ struct YouStep: View {
                                             .foregroundStyle(Theme.muted)
                                     }
                                     .frame(maxWidth: .infinity, minHeight: 58)
-                                    .background(selected ? Color(hex: 0x2A2350) : Theme.surface,
-                                                in: RoundedRectangle(cornerRadius: 14))
-                                    .overlay(RoundedRectangle(cornerRadius: 14)
+                                    .background(selected ? Theme.surfaceSelected : Theme.surface,
+                                                in: RoundedRectangle(cornerRadius: Theme.radius))
+                                    .overlay(RoundedRectangle(cornerRadius: Theme.radius)
                                         .stroke(selected ? Theme.gold : Theme.border, lineWidth: selected ? 1.5 : 1))
                                 }
                                 .buttonStyle(.plain)
@@ -341,67 +341,13 @@ struct TarotTile: View {
             face.opacity(revealed ? 1 : 0)
                 .rotation3DEffect(.degrees(180), axis: (x: 0, y: 1, z: 0))
         }
-        .aspectRatio(2.0 / 3.0, contentMode: .fit)
+        .aspectRatio(TarotArt.aspect, contentMode: .fit)
         .rotation3DEffect(.degrees(revealed ? 180 : 0), axis: (x: 0, y: 1, z: 0), perspective: 0.45)
     }
 
-    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: 10, style: .continuous) }
+    private var back: some View { TarotBack() }
 
-    private var symbol: String {
-        switch card.name {
-        case "The Fool": "figure.walk"
-        case "The Magician": "wand.and.stars"
-        case "The High Priestess": "moon.circle"
-        case "The Empress": "leaf"
-        case "The Lovers": "heart"
-        case "Strength": "flame"
-        case "Wheel of Fortune": "circle.dashed"
-        case "Temperance": "drop"
-        case "The Star": "star"
-        case "The Moon": "moon"
-        case "The Sun": "sun.max"
-        case "The World": "globe.europe.africa"
-        default: "sparkle"
-        }
-    }
-
-    private var back: some View {
-        shape.fill(Theme.cardFace)
-            .overlay(shape.stroke(Theme.gold, lineWidth: 1.5))
-            .overlay(shape.inset(by: 6).stroke(Theme.gold.opacity(0.35), lineWidth: 1))
-            .overlay(
-                VStack(spacing: 10) {
-                    Image(systemName: "sparkle").font(.system(size: 11))
-                    Image(systemName: "moon.stars").font(.system(size: 26))
-                    Image(systemName: "sparkle").font(.system(size: 11))
-                }
-                .foregroundStyle(Theme.gold.opacity(0.85))
-            )
-    }
-
-    private var face: some View {
-        shape.fill(LinearGradient(colors: [Color(hex: 0x3A2E6B), Color(hex: 0x1F1838)],
-                                  startPoint: .top, endPoint: .bottom))
-            .overlay(shape.stroke(Theme.gold, lineWidth: 1.5))
-            .overlay(
-                VStack(spacing: 6) {
-                    Text(card.numeral).font(Theme.display(14))
-                    Spacer(minLength: 0)
-                    Image(systemName: symbol).font(.system(size: 22))
-                    Spacer(minLength: 0)
-                    if !compact {
-                        Text(card.name)
-                            .font(Theme.display(13))
-                            .multilineTextAlignment(.center)
-                            .lineLimit(2)
-                            .minimumScaleFactor(0.7)
-                    }
-                }
-                .foregroundStyle(Theme.gold)
-                .padding(.vertical, 10)
-                .padding(.horizontal, 6)
-            )
-    }
+    private var face: some View { TarotArt(card: card, compact: compact) }
 }
 
 // MARK: 7. Result: the spread and the psychic match
@@ -452,7 +398,7 @@ struct ResultStep: View {
                     .buttonStyle(GoldButtonStyle())
                 if let shareImage {
                     ShareLink(item: shareImage,
-                              preview: SharePreview("My Moonlit reading", image: shareImage)) {
+                              preview: SharePreview("My As Fate Would Have It reading", image: shareImage)) {
                         Label("Share my reading", systemImage: "square.and.arrow.up")
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(Theme.gold)
@@ -481,8 +427,8 @@ struct ResultStep: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(hex: 0x231C42), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(Theme.gold.opacity(0.5), lineWidth: 1))
+        .background(Theme.surfaceRaised, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous).stroke(Theme.gold.opacity(0.5), lineWidth: 1))
     }
 
     @MainActor private func renderShareImage() {
@@ -534,8 +480,8 @@ struct ShareCard: View {
         .padding(28)
         .frame(width: 360)
         .background(
-            LinearGradient(colors: [Color(hex: 0x241D45), Theme.bg], startPoint: .top, endPoint: .bottom)
+            LinearGradient(colors: [Theme.surfaceRaised, Theme.bg], startPoint: .top, endPoint: .bottom)
         )
-        .environment(\.colorScheme, .dark)
+        .environment(\.colorScheme, .light)
     }
 }

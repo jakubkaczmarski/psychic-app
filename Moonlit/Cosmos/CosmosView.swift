@@ -27,7 +27,7 @@ final class CosmosController: NSObject, ObservableObject {
             labels[body.rawValue] = makeLabel(glyph: nil, name: body.name, color: .white, size: body == .sun ? 13 : (body == .moon ? 11 : 12))
         }
         for (i, sign) in ZodiacSign.all.enumerated() {
-            labels["sign\(i)"] = makeLabel(glyph: sign.glyph, name: sign.name, color: UIColor(Theme.gold), size: 12, weight: .bold)
+            labels["sign\(i)"] = makeLabel(glyph: sign.glyph, name: sign.name, color: UIColor(NightTheme.gold), size: 12, weight: .bold)
         }
         labels.values.forEach(overlay.addChild)
         let link = CADisplayLink(target: self, selector: #selector(placeLabels))
@@ -348,9 +348,9 @@ struct CosmosView: View {
             circleButton("xmark", label: "Close") { dismiss() }
             Spacer()
             VStack(spacing: 2) {
-                Text("Cosmic view").font(Theme.display(19)).foregroundStyle(Theme.textBright)
+                Text("Cosmic view").font(NightTheme.display(19)).foregroundStyle(NightTheme.textBright)
                 Text(controller.selected.map { "Following \($0.name)" } ?? "The solar system")
-                    .font(.system(size: 12)).foregroundStyle(Theme.muted)
+                    .font(.system(size: 12)).foregroundStyle(NightTheme.muted)
             }
             Spacer()
             circleButton("scope", label: "Show everything") { controller.fly(to: nil) }
@@ -362,7 +362,7 @@ struct CosmosView: View {
     private var hint: some View {
         Text("Drag to look around · pinch to zoom · tap a planet")
             .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(Theme.textSoft)
+            .foregroundStyle(NightTheme.textSoft)
             .padding(.horizontal, 14).padding(.vertical, 8)
             .background(.ultraThinMaterial, in: Capsule())
             .padding(.top, 10)
@@ -372,7 +372,7 @@ struct CosmosView: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(Theme.textBright)
+                .foregroundStyle(NightTheme.textBright)
                 .frame(width: 44, height: 44)
                 .background(.ultraThinMaterial, in: Circle())
         }
@@ -384,12 +384,12 @@ struct CosmosView: View {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated).year()))
-                        .font(Theme.display(24, .medium))
-                        .foregroundStyle(Theme.textBright)
+                        .font(NightTheme.display(24, .medium))
+                        .foregroundStyle(NightTheme.textBright)
                         .lineLimit(1)
                         .minimumScaleFactor(0.75)
                         .contentTransition(.numericText())
-                    Text(relativeLabel).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.gold)
+                    Text(relativeLabel).font(.system(size: 13, weight: .semibold)).foregroundStyle(NightTheme.gold)
                 }
                 Spacer(minLength: 8)
                 if Int(offset.rounded()) != 0 {
@@ -400,9 +400,9 @@ struct CosmosView: View {
                     } label: {
                         Image(systemName: "arrow.uturn.backward")
                             .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(Theme.textBright)
+                            .foregroundStyle(NightTheme.textBright)
                             .frame(width: 36, height: 36)
-                            .background(Theme.surfaceRaised, in: Circle())
+                            .background(NightTheme.surfaceRaised, in: Circle())
                     }
                     .accessibilityLabel("Back to today")
                     .transition(.scale.combined(with: .opacity))
@@ -413,9 +413,9 @@ struct CosmosView: View {
                         .monospacedDigit()
                         .lineLimit(1)
                         .fixedSize()
-                        .foregroundStyle(Theme.textBright)
+                        .foregroundStyle(NightTheme.textBright)
                         .padding(.horizontal, 11).frame(height: 36)
-                        .background(Theme.surfaceRaised, in: Capsule())
+                        .background(NightTheme.surfaceRaised, in: Capsule())
                         .contentTransition(.numericText())
                 }
                 .accessibilityLabel("Playback speed \(speed.label)")
@@ -423,9 +423,9 @@ struct CosmosView: View {
                 Button { playing.toggle() } label: {
                     Image(systemName: playing ? "pause.fill" : "play.fill")
                         .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(Theme.onGold)
+                        .foregroundStyle(NightTheme.onGold)
                         .frame(width: 40, height: 40)
-                        .background(Theme.gold, in: Circle())
+                        .background(NightTheme.gold, in: Circle())
                 }
                 .accessibilityLabel(playing ? "Pause time" : "Play time forward")
             }
@@ -452,9 +452,9 @@ struct CosmosView: View {
         .background(
             RoundedRectangle(cornerRadius: 28, style: .continuous)
                 .fill(.ultraThinMaterial)
-                .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).fill(Theme.bg.opacity(0.55)))
+                .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).fill(NightTheme.bg.opacity(0.55)))
         )
-        .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).stroke(Theme.border, lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).stroke(NightTheme.border, lineWidth: 1))
         .background(GeometryReader { g in
             Color.clear
                 .onAppear { panelHeight = g.size.height }
@@ -488,19 +488,19 @@ struct CosmosView: View {
                     .font(.system(size: 18))
                     .foregroundStyle(Color(hex: p.body.colorHex))
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(p.body.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textBright)
+                    Text(p.body.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(NightTheme.textBright)
                     Text("\(p.sign.glyph) \(p.sign.name) \(p.degreeInSign)°\(p.retrograde ? " ℞" : "")")
                         .font(.system(size: 12))
-                        .foregroundStyle(p.retrograde ? Color(hex: 0xF0A27A) : Theme.muted)
+                        .foregroundStyle(p.retrograde ? Color(hex: 0xF0A27A) : NightTheme.muted)
                         .monospacedDigit()
                 }
             }
             .padding(.horizontal, 12)
             .frame(height: 50)
-            .background(isSelected ? Color(hex: 0x2A2350) : Theme.surface.opacity(0.8),
+            .background(isSelected ? Color(hex: 0x2A2350) : NightTheme.surface.opacity(0.8),
                         in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(isSelected ? Theme.gold : Theme.border, lineWidth: isSelected ? 1.5 : 1))
+                .stroke(isSelected ? NightTheme.gold : NightTheme.border, lineWidth: isSelected ? 1.5 : 1))
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(p.body.name) in \(p.sign.name)\(p.retrograde ? ", retrograde" : "")")
@@ -509,7 +509,7 @@ struct CosmosView: View {
     @ViewBuilder private func detail(for body: Ephemeris.Body) -> some View {
         if body == .earth {
             Text("This is home. Every sign you see is measured from here: the gold line runs from Earth through a planet to the sign behind it.")
-                .font(.system(size: 14)).foregroundStyle(Theme.textSoft)
+                .font(.system(size: 14)).foregroundStyle(NightTheme.textSoft)
                 .fixedSize(horizontal: false, vertical: true)
         } else if let p = placements.first(where: { $0.body == body }) {
             let psychic = app.matchedPsychic
@@ -518,15 +518,15 @@ struct CosmosView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(alignment: .firstTextBaseline) {
                             Text("\(body.name) in \(p.sign.name)\(p.retrograde ? ", retrograde" : "")")
-                                .font(Theme.display(20)).foregroundStyle(Theme.gold)
+                                .font(NightTheme.display(20)).foregroundStyle(NightTheme.gold)
                             Spacer(minLength: 8)
                             Image(systemName: "chevron.down")
                                 .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(Theme.muted)
+                                .foregroundStyle(NightTheme.muted)
                                 .rotationEffect(.degrees(detailExpanded ? 180 : 0))
                         }
                         Text(explanation(p))
-                            .font(.system(size: 14)).foregroundStyle(Theme.textSoft)
+                            .font(.system(size: 14)).foregroundStyle(NightTheme.textSoft)
                             .lineLimit(detailExpanded ? nil : 2)
                             .multilineTextAlignment(.leading)
                             .fixedSize(horizontal: false, vertical: true)
@@ -611,17 +611,17 @@ private struct TimeRuler: View {
                     var path = Path()
                     path.move(to: CGPoint(x: x, y: size.height - h))
                     path.addLine(to: CGPoint(x: x, y: size.height))
-                    ctx.stroke(path, with: .color(isMonth ? Theme.textSoft : Theme.borderStrong), lineWidth: isMonth ? 1.5 : 1)
+                    ctx.stroke(path, with: .color(isMonth ? NightTheme.textSoft : NightTheme.borderStrong), lineWidth: isMonth ? 1.5 : 1)
                     if isMonth {
                         let text = Text(day.formatted(.dateTime.month(.abbreviated)))
-                            .font(.system(size: 10, weight: .semibold)).foregroundColor(Theme.muted)
+                            .font(.system(size: 10, weight: .semibold)).foregroundColor(NightTheme.muted)
                         ctx.draw(text, at: CGPoint(x: x, y: 6))
                     }
                 }
                 var needle = Path()
                 needle.move(to: CGPoint(x: mid, y: 12))
                 needle.addLine(to: CGPoint(x: mid, y: size.height))
-                ctx.stroke(needle, with: .color(Theme.gold), lineWidth: 2.5)
+                ctx.stroke(needle, with: .color(NightTheme.gold), lineWidth: 2.5)
             }
             .contentShape(Rectangle())
             .gesture(

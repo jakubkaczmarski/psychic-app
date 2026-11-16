@@ -146,7 +146,7 @@ struct ChatView: View {
                             .foregroundStyle(Theme.onGold)
                             .padding(.horizontal, 16)
                             .frame(minHeight: 40)
-                            .background(Theme.gold, in: Capsule())
+                            .background(Theme.gold, in: Theme.chip)
                     }
                     .disabled(busy)
                     .opacity(busy ? 0.5 : 1)
@@ -157,8 +157,8 @@ struct ChatView: View {
                             .foregroundStyle(Theme.text)
                             .padding(.horizontal, 16)
                             .frame(minHeight: 40)
-                            .background(Theme.surface, in: Capsule())
-                            .overlay(Capsule().stroke(Theme.borderStrong, lineWidth: 1))
+                            .background(Theme.surface, in: Theme.chip)
+                            .overlay(Theme.chip.stroke(Theme.borderStrong, lineWidth: 1))
                             .disabled(busy)
                             .opacity(busy ? 0.5 : 1)
                     }
@@ -173,8 +173,8 @@ struct ChatView: View {
                     .submitLabel(.send)
                     .onSubmit(sendDraft)
                     .padding(.horizontal, 18).padding(.vertical, 13)
-                    .background(Theme.surface, in: RoundedRectangle(cornerRadius: 24))
-                    .overlay(RoundedRectangle(cornerRadius: 24).stroke(Theme.borderStrong, lineWidth: 1))
+                    .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.radius))
+                    .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(Theme.borderStrong, lineWidth: 1))
                     .foregroundStyle(Theme.textBright)
                     .accessibilityLabel("Ask your question")
 
@@ -224,7 +224,7 @@ struct UnlockReplyRow: View {
                     .foregroundStyle(Theme.onGold)
                     .padding(.horizontal, 18)
                     .frame(minHeight: 44)
-                    .background(Theme.gold, in: Capsule())
+                    .background(Theme.gold, in: Theme.chip)
             }
             Spacer(minLength: 0)
         }
@@ -240,8 +240,8 @@ struct TypingRow: View {
             AvatarView(psychic: psychic, size: 30)
             TypingDots()
                 .padding(.horizontal, 16).padding(.vertical, 15)
-                .background(Theme.surfaceRaised, in: UnevenRoundedRectangle(topLeadingRadius: 18, bottomLeadingRadius: 4, bottomTrailingRadius: 18, topTrailingRadius: 18))
-                .overlay(UnevenRoundedRectangle(topLeadingRadius: 18, bottomLeadingRadius: 4, bottomTrailingRadius: 18, topTrailingRadius: 18).stroke(Theme.border, lineWidth: 1))
+                .background(Theme.surfaceRaised, in: UnevenRoundedRectangle(topLeadingRadius: 10, bottomLeadingRadius: 2, bottomTrailingRadius: 10, topTrailingRadius: 10))
+                .overlay(UnevenRoundedRectangle(topLeadingRadius: 10, bottomLeadingRadius: 2, bottomTrailingRadius: 10, topTrailingRadius: 10).stroke(Theme.border, lineWidth: 1))
             Spacer(minLength: 40)
         }
         .accessibilityElement(children: .ignore)
@@ -265,7 +265,7 @@ struct MessageRow: View {
                         .font(.system(size: 16))
                         .foregroundStyle(Theme.onGold)
                         .padding(.horizontal, 14).padding(.vertical, 11)
-                        .background(Theme.gold, in: UnevenRoundedRectangle(topLeadingRadius: 18, bottomLeadingRadius: 18, bottomTrailingRadius: 4, topTrailingRadius: 18))
+                        .background(Theme.gold, in: UnevenRoundedRectangle(topLeadingRadius: 10, bottomLeadingRadius: 10, bottomTrailingRadius: 2, topTrailingRadius: 10))
                 }
                 if showSeen {
                     Text("Seen")
@@ -312,8 +312,8 @@ struct MessageRow: View {
                     }
                 }
                 .padding(.horizontal, 14).padding(.vertical, 11)
-                .background(Theme.surfaceRaised, in: UnevenRoundedRectangle(topLeadingRadius: 18, bottomLeadingRadius: 4, bottomTrailingRadius: 18, topTrailingRadius: 18))
-                .overlay(UnevenRoundedRectangle(topLeadingRadius: 18, bottomLeadingRadius: 4, bottomTrailingRadius: 18, topTrailingRadius: 18).stroke(Theme.border, lineWidth: 1))
+                .background(Theme.surfaceRaised, in: UnevenRoundedRectangle(topLeadingRadius: 10, bottomLeadingRadius: 2, bottomTrailingRadius: 10, topTrailingRadius: 10))
+                .overlay(UnevenRoundedRectangle(topLeadingRadius: 10, bottomLeadingRadius: 2, bottomTrailingRadius: 10, topTrailingRadius: 10).stroke(Theme.border, lineWidth: 1))
                 Spacer(minLength: 40)
             }
         case .card:
@@ -332,8 +332,8 @@ struct MessageRow: View {
                     }
                     .padding(14)
                     .frame(width: 260, alignment: .leading)
-                    .background(Theme.surface, in: RoundedRectangle(cornerRadius: 18))
-                    .overlay(RoundedRectangle(cornerRadius: 18).stroke(Theme.gold, lineWidth: 1))
+                    .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.radius))
+                    .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(Theme.gold, lineWidth: 1))
                     Spacer(minLength: 0)
                 }
                 .transition(.scale(scale: 0.9).combined(with: .opacity))
@@ -364,8 +364,8 @@ struct RitualCardView: View {
                     .font(.system(size: 30))
                     .foregroundStyle(Theme.gold)
                     .frame(width: 56, height: 56)
-                    .background(accent.opacity(0.35), in: RoundedRectangle(cornerRadius: 14))
-                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.gold.opacity(0.6), lineWidth: 1))
+                    .background(accent.opacity(0.35), in: RoundedRectangle(cornerRadius: Theme.radius))
+                    .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(Theme.gold.opacity(0.6), lineWidth: 1))
                     .scaleEffect(shown ? 1 : 0.6)
                     .rotationEffect(.degrees(shown ? 0 : -20))
                 VStack(alignment: .leading, spacing: 4) {
@@ -383,8 +383,8 @@ struct RitualCardView: View {
         }
         .padding(14)
         .frame(width: 270, alignment: .leading)
-        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 18))
-        .overlay(RoundedRectangle(cornerRadius: 18).stroke(Theme.gold, lineWidth: 1))
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.radius))
+        .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(Theme.gold, lineWidth: 1))
         .accessibilityElement(children: .combine)
         .onAppear { withAnimation(.spring(response: 0.6, dampingFraction: 0.6)) { shown = true } }
     }

@@ -49,7 +49,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Reading server")
                 } footer: {
-                    Text("Readings come from the Moonlit server. Leave the address empty for demo mode.")
+                    Text("Readings come from the As Fate Would Have It server. Leave the address empty for demo mode.")
                 }
 
                 Section("You") {
@@ -77,22 +77,22 @@ struct SettingsView: View {
                     Text("Daily")
                 } footer: {
                     Text(notificationsBlocked
-                         ? "Notifications are turned off for Moonlit. You can allow them in the iPhone Settings app."
+                         ? "Notifications are turned off for As Fate Would Have It. You can allow them in the iPhone Settings app."
                          : "Your psychic reads your card of the day and sends a message at \(MorningMessages.hour):00.")
                 }
 
                 Section {
                     if app.isPlus {
-                        Label("Moonlit+ is on", systemImage: "sparkles")
+                        Label("Fate+ is on", systemImage: "sparkles")
                     } else {
                         Text("\(app.freeMessagesLeft) of \(AppState.freeMessagesPerDay) free messages left today")
-                        Button("Get Moonlit+") { showPaywall = true }
+                        Button("Get Fate+") { showPaywall = true }
                     }
                     #if DEBUG
-                    Button("Debug: reset Moonlit+ and free messages") { app.resetPlusForTesting() }
+                    Button("Debug: reset Fate+ and free messages") { app.resetPlusForTesting() }
                     #endif
                 } header: {
-                    Text("Moonlit+")
+                    Text("Fate+")
                 }
 
                 Section {
@@ -112,7 +112,7 @@ struct SettingsView: View {
                         }
                 } footer: {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Moonlit is for entertainment only. Its psychics are AI characters and can't predict the future.")
+                        Text("As Fate Would Have It is for entertainment only. Its psychics are AI characters and can't predict the future.")
                         Text("Planet textures: [Solar System Scope](https://www.solarsystemscope.com/textures/), based on NASA imagery, CC BY 4.0.")
                     }
                 }
@@ -129,6 +129,6 @@ struct SettingsView: View {
                             name: app.userName.trimmingCharacters(in: .whitespaces), source: "settings") { showPaywall = false }
             }
         }
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
     }
 }

@@ -1,0 +1,6 @@
+{
+  "images" : [
+    { "filename" : "tarot_star.jpg", "idiom" : "universal" }
+  ],
+  "info" : { "author" : "xcode", "version" : 1 }
+}

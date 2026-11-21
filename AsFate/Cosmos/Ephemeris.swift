@@ -170,6 +170,58 @@ enum Ephemeris {
         return (t, end)
     }
 
+    /// A body's stay in the zodiac sign it's in: when it entered, when it leaves and where it goes next.
+    struct SignStay {
+        /// Index into `ZodiacSign.all`.
+        let sign: Int
+        /// Days since J2000; nil when it's further away than the search looks.
+        let entered: Double?
+        let leaves: Double?
+        /// The sign it moves into. While retrograde that can be the one before.
+        let next: Int
+    }
+
+    static func signIndex(_ body: Body, days d: Double) -> Int {
+        Int(geocentricLongitude(body, days: d) / 30) % 12
+    }
+
+    /// Finds the sign changes on either side of `d` by stepping through time.
+    static func signStay(_ body: Body, days d: Double) -> SignStay {
+        let sign = signIndex(body, days: d)
+        // Fast bodies need small steps; Neptune spends about 14 years in a sign.
+        let step: Double, window: Double
+        switch body {
+        case .moon: (step, window) = (0.02, 5)
+        case .sun, .mercury, .venus, .mars: (step, window) = (0.25, 400)
+        default: (step, window) = (1, 16 * 365.25)
+        }
+        func edge(_ direction: Double) -> Double? {
+            var t = d
+            while abs(t - d) < window {
+                t += direction * step
+                if signIndex(body, days: t) != sign { return t }
+            }
+            return nil
+        }
+        let leaves = edge(1)
+        return SignStay(sign: sign, entered: edge(-1), leaves: leaves,
+                        next: leaves.map { signIndex(body, days: $0) } ?? (sign + 1) % 12)
+    }
+
+    /// Distance from Earth in AU; nil for Earth itself.
+    static func distanceFromEarth(_ body: Body, days d: Double) -> Double? {
+        let e = heliocentric(.earth, days: d)
+        switch body {
+        case .earth: return nil
+        case .moon: return 0.00257
+        case .sun: return (e.x * e.x + e.y * e.y + e.z * e.z).squareRoot()
+        default:
+            let p = heliocentric(body, days: d)
+            let x = p.x - e.x, y = p.y - e.y, z = p.z - e.z
+            return (x * x + y * y + z * z).squareRoot()
+        }
+    }
+
     /// The calendar date for a day count since J2000.
     static func date(days d: Double) -> Date {
         Date(timeIntervalSince1970: 946_728_000 + d * 86_400)

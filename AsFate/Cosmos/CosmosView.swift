@@ -50,17 +50,79 @@ final class CosmosController: NSObject, ObservableObject {
         view.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tapped(_:))))
     }
 
-    /// Starts far out in space and swoops in.
+    /// The opening flight, while it's running: where the camera is and what it looks at, as points
+    /// to glide through.
+    private var intro: (start: CFTimeInterval, eyes: [SCNVector3], aims: [SCNVector3])?
+    private static let introDuration: Double = 11
+
+    /// Opens with a slow, low pass close by Saturn, Jupiter and Earth, then pulls up and back to
+    /// the whole system.
     func playIntro() {
-        let cam = cosmos.cameraNode
-        cam.position = SCNVector3(-30, 70, 110)
-        cam.look(at: SCNVector3Zero)
-        SCNTransaction.begin()
-        SCNTransaction.animationDuration = 2.6
-        SCNTransaction.animationTimingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0, 0, 1)
-        cam.position = Self.overview
-        cam.look(at: Self.overviewAim, up: SCNVector3(0, 1, 0), localFront: SCNVector3(0, 0, -1))
-        SCNTransaction.commit()
+        let cam = view?.pointOfView ?? cosmos.cameraNode
+        // Close enough to a planet that the usual near limit would cut into it.
+        cam.camera?.zNear = 0.03
+        cam.camera?.fieldOfView = CosmosScene.fieldOfView
+
+        var eyes: [SCNVector3] = [], aims: [SCNVector3] = []
+        for body in [Ephemeris.Body.saturn, .jupiter, .earth] {
+            guard let p = cosmos.bodyNodes[body]?.position else { continue }
+            let r = cosmos.radius(of: body)
+            // Away from the Sun and off to one side: always the same side, so the path is one long arc.
+            let length = max(sqrt(p.x * p.x + p.z * p.z), 0.001)
+            let out = SCNVector3(p.x / length, 0, p.z / length)
+            let side = SCNVector3(-out.z, 0, out.x)
+            eyes.append(SCNVector3(p.x + out.x * r * 2.2 + side.x * r * 2.4,
+                                   p.y + r * 0.7,
+                                   p.z + out.z * r * 2.2 + side.z * r * 2.4))
+            aims.append(p)
+        }
+        guard let first = eyes.first, let firstAim = aims.first else { return }
+        // Come in from further out along the same line of sight.
+        let lead = SCNVector3(first.x + (first.x - firstAim.x) * 5, first.y + 2.5, first.z + (first.z - firstAim.z) * 5)
+        eyes = [lead] + eyes + [SCNVector3(Self.overview.x * 0.55, Self.overview.y * 0.45, Self.overview.z * 0.55), Self.overview]
+        aims = [firstAim] + aims + [Self.overviewAim, Self.overviewAim]
+
+        view?.allowsCameraControl = false
+        cam.position = lead
+        cam.look(at: firstAim, up: SCNVector3(0, 1, 0), localFront: SCNVector3(0, 0, -1))
+        intro = (CACurrentMediaTime(), eyes, aims)
+    }
+
+    /// Ends the opening flight where it is, handing the camera back.
+    private func stopIntro() {
+        guard intro != nil else { return }
+        intro = nil
+        view?.allowsCameraControl = true
+        view?.defaultCameraController.target = SCNVector3Zero
+    }
+
+    /// Moves the camera along the opening flight; called every frame.
+    private func stepIntro() {
+        guard let intro, let view else { return }
+        let cam = view.pointOfView ?? cosmos.cameraNode
+        let t = (CACurrentMediaTime() - intro.start) / Self.introDuration
+        guard t < 1 else {
+            cam.position = Self.overview
+            cam.look(at: Self.overviewAim, up: SCNVector3(0, 1, 0), localFront: SCNVector3(0, 0, -1))
+            stopIntro()
+            return
+        }
+        // Ease in and out over the whole flight, then find the stretch of the path we're on.
+        let eased = t * t * (3 - 2 * t)
+        let along = eased * Double(intro.eyes.count - 1)
+        let i = min(Int(along), intro.eyes.count - 2)
+        let f = Float(along - Double(i))
+        cam.position = Self.spline(intro.eyes, i, f)
+        cam.look(at: Self.spline(intro.aims, i, f), up: SCNVector3(0, 1, 0), localFront: SCNVector3(0, 0, -1))
+    }
+
+    /// A smooth curve through the points (Catmull-Rom), between point `i` and the next.
+    private static func spline(_ p: [SCNVector3], _ i: Int, _ t: Float) -> SCNVector3 {
+        let a = p[max(i - 1, 0)], b = p[i], c = p[min(i + 1, p.count - 1)], d = p[min(i + 2, p.count - 1)]
+        func axis(_ a: Float, _ b: Float, _ c: Float, _ d: Float) -> Float {
+            0.5 * (2 * b + (c - a) * t + (2 * a - 5 * b + 4 * c - d) * t * t + (3 * b - a - 3 * c + d) * t * t * t)
+        }
+        return SCNVector3(axis(a.x, b.x, c.x, d.x), axis(a.y, b.y, c.y, d.y), axis(a.z, b.z, c.z, d.z))
     }
 
     func update(date: Date) {
@@ -79,6 +141,7 @@ final class CosmosController: NSObject, ObservableObject {
 
     /// Turns the dial so the selected body's sign is at the top and zooms in a little; nil goes back to the overview.
     func fly(to body: Ephemeris.Body?) {
+        stopIntro()
         selected = body
         cosmos.update(to: currentDate, selected: body)
         let d = Ephemeris.daysSinceJ2000(currentDate)
@@ -110,6 +173,20 @@ final class CosmosController: NSObject, ObservableObject {
     /// The date on screen, kept in sync by the view.
     var currentDate = Date()
 
+    private var stays: [Ephemeris.Body: Ephemeris.SignStay] = [:]
+
+    /// When a body entered its sign and when it leaves. Finding that means stepping through time,
+    /// so the answer is kept until the body crosses into another sign.
+    func stay(_ body: Ephemeris.Body, days d: Double) -> Ephemeris.SignStay {
+        if let hit = stays[body], hit.sign == Ephemeris.signIndex(body, days: d),
+           d >= (hit.entered ?? -.infinity), d <= (hit.leaves ?? .infinity) {
+            return hit
+        }
+        let fresh = Ephemeris.signStay(body, days: d)
+        stays[body] = fresh
+        return fresh
+    }
+
     deinit { displayLink?.invalidate() }
 
     private func makeLabel(glyph: String?, name: String, color: UIColor, size: CGFloat, weight: UIFont.Weight = .semibold) -> SKNode {
@@ -139,6 +216,7 @@ final class CosmosController: NSObject, ObservableObject {
     /// a more important one is hidden.
     @objc private func placeLabels() {
         guard let view, view.bounds.height > 0 else { return }
+        stepIntro()
         cosmos.pointOfView = view.pointOfView
         if let eye = view.pointOfView?.presentation.worldPosition { cosmos.sizeSelectionRing(cameraAt: eye, selected: selected) }
         let h = view.bounds.height
@@ -231,6 +309,52 @@ private struct CosmosSceneView: UIViewRepresentable {
     func updateUIView(_ uiView: SCNView, context: Context) {}
 }
 
+/// Colours and type of the cosmic view's sheet: a black, data-forward look with bold sans-serif
+/// headings, small uppercase labels, tabular numbers and coloured status pills.
+private enum Sky {
+    static let sheet = Color(hex: 0x111113)
+    static let tile = Color.white.opacity(0.07)
+    static let line = Color.white.opacity(0.1)
+    static let text = Color.white
+    static let secondary = Color.white.opacity(0.58)
+    static let faint = Color.white.opacity(0.34)
+    static let green = Color(hex: 0x34C759)
+    static let amber = Color(hex: 0xFFB340)
+    static let orange = Color(hex: 0xFF8A4C)
+
+    static func label(_ text: String) -> some View {
+        Text(text.uppercased())
+            .font(.system(size: 11, weight: .semibold))
+            .tracking(0.7)
+            .foregroundStyle(secondary)
+    }
+
+    static func pill(_ text: String, _ color: Color) -> some View {
+        Text(text.uppercased())
+            .font(.system(size: 11, weight: .bold))
+            .tracking(0.6)
+            .foregroundStyle(color)
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(color.opacity(0.16), in: Capsule())
+    }
+}
+
+/// White capsule button, the sheet's main action.
+private struct SkyButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(.black)
+            .frame(maxWidth: .infinity, minHeight: 52)
+            .background(Color.white.opacity(configuration.isPressed ? 0.8 : 1), in: Capsule())
+    }
+}
+
+extension ZodiacSign {
+    /// Three letters, read like an airport code: "SCO".
+    var code: String { String(name.prefix(3)).uppercased() }
+}
+
 struct CosmosView: View {
     @EnvironmentObject var app: AppState
     @Environment(\.dismiss) private var dismiss
@@ -256,48 +380,72 @@ struct CosmosView: View {
         }
     }
     @State private var showHint = true
-    /// The detail card shows one line until tapped.
-    @State private var detailExpanded = false
-    /// Height of the bottom panel; the 3D view fits in the space above it so the Sun stays centred.
+    /// The sheet pulled up to show every body as a list.
+    @State private var listExpanded = false
+    /// Height of the bottom sheet; the 3D view fits in the space above it so the Sun stays centred.
     @State private var panelHeight: CGFloat = 250
     /// Called with a question and context for Claude when the user asks their psychic about the sky.
     var onAsk: (String, String) -> Void = { _, _ in }
 
     private let now = Date()
     private var date: Date { now.addingTimeInterval(offset * 86_400) }
+    private var days: Double { Ephemeris.daysSinceJ2000(date) }
     private var placements: [Ephemeris.Placement] { Ephemeris.placements(on: date) }
 
+    /// From this width up (an unfolded iPhone Duo) the sheet becomes a panel down the right side
+    /// and the solar system gets the rest of the screen.
+    private static let wideWidth: CGFloat = 620
+    private static let sideWidth: CGFloat = 372
+
     var body: some View {
-        ZStack {
-            CosmosSceneView(controller: controller)
-                .padding(.bottom, max(panelHeight - 24, 0))
-                .ignoresSafeArea(edges: .top)
-                .animation(.spring(response: 0.45, dampingFraction: 0.9), value: panelHeight)
-                .onAppear {
-                    controller.currentDate = date
-                    controller.update(date: date)
-                    controller.playIntro()
-                }
-                .onChange(of: offset) {
-                    controller.currentDate = date
-                    controller.update(date: date)
-                }
+        GeometryReader { geo in
+            let wide = geo.size.width >= Self.wideWidth
+            ZStack {
+                CosmosSceneView(controller: controller)
+                    .padding(.bottom, wide ? 0 : max(panelHeight - 28, 0))
+                    .padding(.trailing, wide ? Self.sideWidth + 12 : 0)
+                    .ignoresSafeArea(edges: wide ? [.top, .bottom, .leading] : .top)
+                    .animation(.spring(response: 0.45, dampingFraction: 0.9), value: panelHeight)
+                    .onAppear {
+                        controller.currentDate = date
+                        controller.update(date: date)
+                        controller.playIntro()
+                    }
+                    .onChange(of: offset) {
+                        controller.currentDate = date
+                        controller.update(date: date)
+                    }
 
-            // A soft fade at the top so the title stays readable over bright planets.
-            VStack {
-                LinearGradient(colors: [.black.opacity(0.75), .black.opacity(0.35), .clear],
-                               startPoint: .top, endPoint: .bottom)
-                    .frame(height: 170)
-                    .ignoresSafeArea(edges: .top)
-                Spacer()
-            }
-            .allowsHitTesting(false)
+                // A soft fade at the top so the title stays readable over bright planets.
+                VStack {
+                    LinearGradient(colors: [.black.opacity(0.75), .black.opacity(0.35), .clear],
+                                   startPoint: .top, endPoint: .bottom)
+                        .frame(height: wide ? 110 : 170)
+                        .ignoresSafeArea(edges: .top)
+                    Spacer()
+                }
+                .allowsHitTesting(false)
 
-            VStack(spacing: 0) {
-                topBar
-                if showHint { hint.transition(.opacity) }
-                Spacer()
-                panel
+                if wide {
+                    HStack(alignment: .top, spacing: 0) {
+                        VStack(spacing: 0) {
+                            topBar
+                            if showHint { hint.transition(.opacity) }
+                            Spacer()
+                        }
+                        sidePanel
+                            .frame(width: Self.sideWidth)
+                            .padding(.vertical, 10)
+                            .padding(.trailing, 10)
+                    }
+                } else {
+                    VStack(spacing: 0) {
+                        topBar
+                        if showHint { hint.transition(.opacity) }
+                        Spacer()
+                        sheet
+                    }
+                }
             }
         }
         .background(Color.black)
@@ -341,16 +489,26 @@ struct CosmosView: View {
         }
     }
 
-    // MARK: Pieces
+    /// A day and month, with the year when it isn't the year on screen.
+    private func shortDate(_ day: Double) -> String {
+        let d = Ephemeris.date(days: day)
+        let f = Date.FormatStyle().day().month(.abbreviated)
+        return Calendar.current.isDate(d, equalTo: date, toGranularity: .year) ? d.formatted(f) : d.formatted(f.year())
+    }
+
+    // MARK: Top
 
     private var topBar: some View {
         HStack {
             circleButton("xmark", label: "Close") { dismiss() }
             Spacer()
-            VStack(spacing: 2) {
-                Text("Cosmic view").font(NightTheme.display(19)).foregroundStyle(NightTheme.textBright)
-                Text(controller.selected.map { "Following \($0.name)" } ?? "The solar system")
-                    .font(.system(size: 12)).foregroundStyle(NightTheme.muted)
+            // With the sheet pulled up the dial needs the room up here, and the sheet names the body.
+            if controller.selected == nil, !listExpanded {
+                VStack(spacing: 2) {
+                    Text("Cosmic view").font(.system(size: 17, weight: .bold)).foregroundStyle(Sky.text)
+                    Text("The solar system").font(.system(size: 12, weight: .medium)).foregroundStyle(Sky.secondary)
+                }
+                .transition(.opacity)
             }
             Spacer()
             circleButton("scope", label: "Show everything") { controller.fly(to: nil) }
@@ -362,7 +520,7 @@ struct CosmosView: View {
     private var hint: some View {
         Text("Drag to look around · pinch to zoom · tap a planet")
             .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(NightTheme.textSoft)
+            .foregroundStyle(Sky.secondary)
             .padding(.horizontal, 14).padding(.vertical, 8)
             .background(.ultraThinMaterial, in: Capsule())
             .padding(.top, 10)
@@ -372,97 +530,163 @@ struct CosmosView: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(NightTheme.textBright)
+                .foregroundStyle(Sky.text)
                 .frame(width: 44, height: 44)
                 .background(.ultraThinMaterial, in: Circle())
         }
         .accessibilityLabel(label)
     }
 
-    private var panel: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated).year()))
-                        .font(NightTheme.display(24, .medium))
-                        .foregroundStyle(NightTheme.textBright)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.75)
-                        .contentTransition(.numericText())
-                    Text(relativeLabel).font(.system(size: 13, weight: .semibold)).foregroundStyle(NightTheme.gold)
-                }
-                Spacer(minLength: 8)
-                if Int(offset.rounded()) != 0 {
-                    Button {
-                        playing = false
-                        withAnimation(.easeInOut(duration: 0.6)) { offset = 0 }
-                        animateBackToToday()
-                    } label: {
-                        Image(systemName: "arrow.uturn.backward")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(NightTheme.textBright)
-                            .frame(width: 36, height: 36)
-                            .background(NightTheme.surfaceRaised, in: Circle())
-                    }
-                    .accessibilityLabel("Back to today")
-                    .transition(.scale.combined(with: .opacity))
-                }
-                Button { speed = speed.next } label: {
-                    Text(speed.label)
-                        .font(.system(size: 13, weight: .semibold))
-                        .monospacedDigit()
-                        .lineLimit(1)
-                        .fixedSize()
-                        .foregroundStyle(NightTheme.textBright)
-                        .padding(.horizontal, 11).frame(height: 36)
-                        .background(NightTheme.surfaceRaised, in: Capsule())
-                        .contentTransition(.numericText())
-                }
-                .accessibilityLabel("Playback speed \(speed.label)")
-                .accessibilityHint("Changes how fast time moves")
-                Button { playing.toggle() } label: {
-                    Image(systemName: playing ? "pause.fill" : "play.fill")
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(NightTheme.onGold)
-                        .frame(width: 40, height: 40)
-                        .background(NightTheme.gold, in: Circle())
-                }
-                .accessibilityLabel(playing ? "Pause time" : "Play time forward")
-            }
+    // MARK: Sheet
 
+    private var sheet: some View {
+        let shape = UnevenRoundedRectangle(topLeadingRadius: 30, topTrailingRadius: 30, style: .continuous)
+        return VStack(alignment: .leading, spacing: 14) {
+            grabber
+            dateHeader
             TimeRuler(offset: $offset, ticks: !playing || speed == .day, onScrubStart: { playing = false })
 
-            ScrollViewReader { proxy in
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(placements) { p in
-                            chip(p).id(p.body)
-                        }
-                    }
-                }
-                .onChange(of: controller.selected) { _, new in
-                    detailExpanded = false
-                    if let new { withAnimation { proxy.scrollTo(new, anchor: .center) } }
-                }
+            if let selected = controller.selected {
+                fitted(maxHeight: 430) { detail(for: selected) }
+                    .transition(.opacity)
+            } else if listExpanded {
+                fitted(maxHeight: 330) { bodyList }
+                    .transition(.opacity)
+            } else {
+                chips
             }
-
-            if let selected = controller.selected { detail(for: selected) }
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .fill(.ultraThinMaterial)
-                .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).fill(NightTheme.bg.opacity(0.55)))
-        )
-        .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).stroke(NightTheme.border, lineWidth: 1))
+        .padding(.horizontal, 18)
+        .padding(.bottom, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Sky.sheet.opacity(0.94), in: shape)
+        .background(.ultraThinMaterial, in: shape)
+        .overlay(shape.stroke(Sky.line, lineWidth: 1))
         .background(GeometryReader { g in
             Color.clear
                 .onAppear { panelHeight = g.size.height }
                 .onChange(of: g.size.height) { _, h in panelHeight = h }
         })
-        .padding(.horizontal, 10)
-        .padding(.bottom, 6)
-        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: controller.selected)
+        .ignoresSafeArea(edges: .bottom)
+        .animation(.spring(response: 0.4, dampingFraction: 0.86), value: controller.selected)
+        .animation(.spring(response: 0.4, dampingFraction: 0.86), value: listExpanded)
+        .onChange(of: controller.selected) { _, new in if new != nil { listExpanded = false } }
+    }
+
+    /// The wide layout's version of the sheet: always open, with the list or the selected body's
+    /// detail scrolling under the date and the time ruler.
+    private var sidePanel: some View {
+        let shape = RoundedRectangle(cornerRadius: 28, style: .continuous)
+        return VStack(alignment: .leading, spacing: 14) {
+            dateHeader
+            TimeRuler(offset: $offset, ticks: !playing || speed == .day, onScrubStart: { playing = false })
+            ScrollView(showsIndicators: false) {
+                if let selected = controller.selected {
+                    detail(for: selected).transition(.opacity)
+                } else {
+                    bodyList.transition(.opacity)
+                }
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.top, 18)
+        .padding(.bottom, 8)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(Sky.sheet.opacity(0.94), in: shape)
+        .background(.ultraThinMaterial, in: shape)
+        .overlay(shape.stroke(Sky.line, lineWidth: 1))
+        .clipShape(shape)
+        .animation(.spring(response: 0.4, dampingFraction: 0.86), value: controller.selected)
+    }
+
+    /// Shows content at its own height, or scrolls it once it would be taller than `maxHeight`.
+    private func fitted<Content: View>(maxHeight: CGFloat, @ViewBuilder _ content: () -> Content) -> some View {
+        let inner = content()
+        return ViewThatFits(in: .vertical) {
+            inner
+            ScrollView(showsIndicators: false) { inner }
+        }
+        .frame(maxHeight: maxHeight)
+    }
+
+    /// Tap or drag the handle: up for the full list, down to fold the sheet away again.
+    private var grabber: some View {
+        Capsule()
+            .fill(Color.white.opacity(0.28))
+            .frame(width: 38, height: 5)
+            .frame(maxWidth: .infinity)
+            .padding(.top, 9)
+            .padding(.bottom, 2)
+            .contentShape(Rectangle())
+            .onTapGesture { toggleSheet(up: controller.selected == nil && !listExpanded) }
+            .gesture(DragGesture(minimumDistance: 12).onEnded { g in
+                if abs(g.translation.height) > 24 { toggleSheet(up: g.translation.height < 0) }
+            })
+            .accessibilityElement()
+            .accessibilityLabel(listExpanded ? "Hide the list of planets" : "Show the list of planets")
+            .accessibilityAddTraits(.isButton)
+    }
+
+    private func toggleSheet(up: Bool) {
+        if up {
+            listExpanded = true
+        } else if controller.selected != nil {
+            controller.fly(to: nil)
+        } else {
+            listExpanded = false
+        }
+    }
+
+    private var dateHeader: some View {
+        HStack(alignment: .center, spacing: 8) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated).year()))
+                    .font(.system(size: 24, weight: .bold))
+                    .foregroundStyle(Sky.text)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .contentTransition(.numericText())
+                Sky.pill(relativeLabel, Int(offset.rounded()) == 0 ? Sky.green : Sky.amber)
+            }
+            Spacer(minLength: 8)
+            if Int(offset.rounded()) != 0 {
+                Button {
+                    playing = false
+                    withAnimation(.easeInOut(duration: 0.6)) { offset = 0 }
+                    animateBackToToday()
+                } label: {
+                    Image(systemName: "arrow.uturn.backward")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Sky.text)
+                        .frame(width: 40, height: 40)
+                        .background(Sky.tile, in: Circle())
+                }
+                .accessibilityLabel("Back to today")
+                .transition(.scale.combined(with: .opacity))
+            }
+            Button { speed = speed.next } label: {
+                Text(speed.label)
+                    .font(.system(size: 13, weight: .semibold))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .fixedSize()
+                    .foregroundStyle(Sky.text)
+                    .padding(.horizontal, 12).frame(height: 40)
+                    .background(Sky.tile, in: Capsule())
+                    .contentTransition(.numericText())
+            }
+            .accessibilityLabel("Playback speed \(speed.label)")
+            .accessibilityHint("Changes how fast time moves")
+            Button { playing.toggle() } label: {
+                Image(systemName: playing ? "pause.fill" : "play.fill")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(.black)
+                    .frame(width: 40, height: 40)
+                    .background(Color.white, in: Circle())
+            }
+            .accessibilityLabel(playing ? "Pause time" : "Play time forward")
+        }
     }
 
     /// Slides time back to today smoothly instead of jumping.
@@ -480,95 +704,222 @@ struct CosmosView: View {
         }
     }
 
-    private func chip(_ p: Ephemeris.Placement) -> some View {
-        let isSelected = controller.selected == p.body
-        return Button { controller.fly(to: isSelected ? nil : p.body) } label: {
-            HStack(spacing: 8) {
-                Text(p.body.glyph)
-                    .font(.system(size: 18))
-                    .foregroundStyle(Color(hex: p.body.colorHex))
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(p.body.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(NightTheme.textBright)
-                    Text("\(p.sign.glyph) \(p.sign.name) \(p.degreeInSign)°\(p.retrograde ? " ℞" : "")")
-                        .font(.system(size: 12))
-                        .foregroundStyle(p.retrograde ? Color(hex: 0xF0A27A) : NightTheme.muted)
-                        .monospacedDigit()
-                }
-            }
-            .padding(.horizontal, 12)
-            .frame(height: 50)
-            .background(isSelected ? Color(hex: 0x2A2350) : NightTheme.surface.opacity(0.8),
-                        in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(isSelected ? NightTheme.gold : NightTheme.border, lineWidth: isSelected ? 1.5 : 1))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(p.body.name) in \(p.sign.name)\(p.retrograde ? ", retrograde" : "")")
+    // MARK: Bodies
+
+    private func position(_ p: Ephemeris.Placement) -> String { "\(p.sign.code) \(p.degreeInSign)°" }
+
+    @ViewBuilder private func status(_ p: Ephemeris.Placement) -> some View {
+        if p.retrograde { Sky.pill("Retrograde", Sky.orange) } else { Sky.pill("Direct", Sky.green) }
     }
 
-    @ViewBuilder private func detail(for body: Ephemeris.Body) -> some View {
-        if body == .earth {
-            Text("This is home. Every sign you see is measured from here: the gold line runs from Earth through a planet to the sign behind it.")
-                .font(.system(size: 14)).foregroundStyle(NightTheme.textSoft)
-                .fixedSize(horizontal: false, vertical: true)
-        } else if let p = placements.first(where: { $0.body == body }) {
-            let psychic = app.matchedPsychic
-            VStack(alignment: .leading, spacing: 8) {
-                Button { withAnimation(.easeInOut(duration: 0.25)) { detailExpanded.toggle() } } label: {
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(alignment: .firstTextBaseline) {
-                            Text("\(body.name) in \(p.sign.name)\(p.retrograde ? ", retrograde" : "")")
-                                .font(NightTheme.display(20)).foregroundStyle(NightTheme.gold)
-                            Spacer(minLength: 8)
-                            Image(systemName: "chevron.down")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(NightTheme.muted)
-                                .rotationEffect(.degrees(detailExpanded ? 180 : 0))
+    /// The folded sheet: one compact card per body, side by side.
+    private var chips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(placements) { p in
+                    Button { controller.fly(to: p.body) } label: {
+                        HStack(spacing: 9) {
+                            Circle().fill(Color(hex: p.body.colorHex)).frame(width: 10, height: 10)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(p.body.name).font(.system(size: 14, weight: .semibold)).foregroundStyle(Sky.text)
+                                Text(position(p))
+                                    .font(.system(size: 12, weight: .medium))
+                                    .monospacedDigit()
+                                    .foregroundStyle(p.retrograde ? Sky.orange : Sky.secondary)
+                            }
                         }
-                        Text(explanation(p))
-                            .font(.system(size: 14)).foregroundStyle(NightTheme.textSoft)
-                            .lineLimit(detailExpanded ? nil : 2)
-                            .multilineTextAlignment(.leading)
-                            .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 12)
+                        .frame(height: 52)
+                        .background(Sky.tile, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(p.body.name) in \(p.sign.name)\(p.retrograde ? ", retrograde" : "")")
+                }
+            }
+        }
+        .padding(.bottom, 6)
+    }
+
+    /// The sheet pulled up: every body as a row, with where it is and whether it's retrograde.
+    private var bodyList: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(placements.enumerated()), id: \.element.id) { i, p in
+                if i > 0 { Rectangle().fill(Sky.line).frame(height: 1) }
+                Button { controller.fly(to: p.body) } label: {
+                    HStack(spacing: 12) {
+                        Text(p.body.glyph)
+                            .font(.system(size: 20))
+                            .foregroundStyle(Color(hex: p.body.colorHex))
+                            .frame(width: 28)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(p.body.name).font(.system(size: 17, weight: .semibold)).foregroundStyle(Sky.text)
+                            Text(p.sign.name).font(.system(size: 13)).foregroundStyle(Sky.secondary)
+                        }
+                        Spacer(minLength: 8)
+                        VStack(alignment: .trailing, spacing: 4) {
+                            Text(position(p))
+                                .font(.system(size: 17, weight: .bold))
+                                .monospacedDigit()
+                                .foregroundStyle(Sky.text)
+                            status(p)
+                        }
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Sky.faint)
+                    }
+                    .padding(.vertical, 10)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityHint(detailExpanded ? "Shows less" : "Shows more")
-                if let retro = retrogradeLine(body) {
-                    Label(retro, systemImage: "arrow.uturn.backward")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Color(hex: 0xF0A27A))
-                }
-                Button {
-                    let when = Int(offset.rounded()) == 0 ? "right now" : "on \(date.formatted(date: .long, time: .omitted))"
-                    let question = "\(body.name) is in \(p.sign.name)\(p.retrograde ? " and retrograde" : "") \(when). What does that mean for me?"
-                    let sky = placements.map { "\($0.body.name) \($0.sign.name) \($0.degreeInSign)°\($0.retrograde ? " retrograde" : "")" }
-                        .joined(separator: ", ")
-                    let note = "[The user is looking at the sky in the app's cosmic view, for \(date.formatted(date: .long, time: .omitted)). Positions: \(sky). Read it for them in your own voice; keep it fun.]"
-                    onAsk(question, note)
-                    dismiss()
-                } label: {
-                    HStack(spacing: 10) {
-                        AvatarView(psychic: psychic, size: 28)
-                        Text("Ask \(psychic.short) what it means")
-                    }
-                }
-                .buttonStyle(GoldButtonStyle())
+                .accessibilityLabel("\(p.body.name) in \(p.sign.name)\(p.retrograde ? ", retrograde" : "")")
             }
-            .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+        .padding(.bottom, 6)
+    }
+
+    // MARK: Detail
+
+    @ViewBuilder private func detail(for body: Ephemeris.Body) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            hero(body)
+            if body == .earth {
+                Text("This is home. Every sign you see is measured from here: the gold line runs from Earth through a planet to the sign behind it.")
+                    .font(.system(size: 15)).foregroundStyle(Sky.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if let p = placements.first(where: { $0.body == body }) {
+                route(p)
+                tiles(p)
+                Text(explanation(p))
+                    .font(.system(size: 15)).foregroundStyle(Sky.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                askButton(p)
+            }
+        }
+        .padding(.bottom, 8)
+    }
+
+    /// The close-up, with the name over it and a button to go back to the whole system.
+    private func hero(_ body: Ephemeris.Body) -> some View {
+        ZStack(alignment: .top) {
+            PlanetHero(planet: body)
+                .frame(height: 170)
+                .frame(maxWidth: .infinity)
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(body.name).font(.system(size: 30, weight: .heavy)).foregroundStyle(Sky.text)
+                    if let p = placements.first(where: { $0.body == body }) { status(p) } else { Sky.pill("Home", Sky.green) }
+                }
+                Spacer()
+                Button { controller.fly(to: nil) } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(Sky.secondary)
+                        .frame(width: 32, height: 32)
+                        .background(Sky.tile, in: Circle())
+                }
+                .accessibilityLabel("Back to the solar system")
+            }
         }
     }
 
-    private func retrogradeLine(_ body: Ephemeris.Body) -> String? {
-        let d = Ephemeris.daysSinceJ2000(date)
-        guard let period = Ephemeris.retrogradePeriod(body, near: d) else { return nil }
-        let f = Date.FormatStyle().month(.abbreviated).day()
-        let start = Ephemeris.date(days: period.start), end = Ephemeris.date(days: period.end)
-        let sameYear = Calendar.current.isDate(end, equalTo: date, toGranularity: .year)
-        let endText = sameYear ? end.formatted(f) : end.formatted(f.year())
-        if d >= period.start { return "Retrograde \(start.formatted(f)) – \(endText)" }
-        return "Next retrograde \(start.formatted(f)) – \(endText)"
+    /// Where the body is and where it goes next, laid out like a journey between two stops.
+    private func route(_ p: Ephemeris.Placement) -> some View {
+        let stay = controller.stay(p.body, days: days)
+        let next = ZodiacSign.all[stay.next]
+        let degrees = p.longitude.truncatingRemainder(dividingBy: 30)
+        // Moving backwards, it heads for the start of the sign.
+        let backwards = stay.next == (stay.sign + 11) % 12
+        let progress = backwards ? 1 - degrees / 30 : degrees / 30
+        return VStack(spacing: 10) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Sky.label("Now in")
+                    Text(p.sign.code).font(.system(size: 40, weight: .heavy)).foregroundStyle(Sky.text)
+                    Text(p.sign.name).font(.system(size: 14, weight: .medium)).foregroundStyle(Sky.text)
+                    Text(stay.entered.map { "since \(shortDate($0))" } ?? "for years")
+                        .font(.system(size: 13)).monospacedDigit().foregroundStyle(Sky.secondary)
+                }
+                Spacer()
+                VStack(alignment: .trailing, spacing: 2) {
+                    Sky.label("Next")
+                    Text(next.code).font(.system(size: 40, weight: .heavy)).foregroundStyle(Sky.secondary)
+                    Text(next.name).font(.system(size: 14, weight: .medium)).foregroundStyle(Sky.text)
+                    Text(stay.leaves.map { "from \(shortDate($0))" } ?? "years away")
+                        .font(.system(size: 13)).monospacedDigit().foregroundStyle(Sky.secondary)
+                }
+            }
+            GeometryReader { geo in
+                let x = max(7, min(geo.size.width - 7, geo.size.width * progress))
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.white.opacity(0.14)).frame(height: 4)
+                    Capsule().fill(Color.white).frame(width: x, height: 4)
+                    Circle()
+                        .fill(Color(hex: p.body.colorHex))
+                        .overlay(Circle().stroke(Color.white, lineWidth: 2))
+                        .frame(width: 14, height: 14)
+                        .offset(x: x - 7)
+                }
+                .frame(maxHeight: .infinity)
+            }
+            .frame(height: 14)
+            .accessibilityElement()
+            .accessibilityLabel("\(Int((progress * 100).rounded())) percent of the way to \(next.name)")
+        }
+    }
+
+    private func tiles(_ p: Ephemeris.Placement) -> some View {
+        let motion = Ephemeris.dailyMotion(p.body, days: days)
+        let distance = Ephemeris.distanceFromEarth(p.body, days: days)
+        return HStack(spacing: 8) {
+            tile("Speed", String(format: "%.2f°", abs(motion)), "per day")
+            tile("From Earth",
+                 p.body == .moon ? "384k" : String(format: "%.2f", distance ?? 0),
+                 p.body == .moon ? "km" : "AU")
+            let retro = retrograde(p.body)
+            tile(retro.title, retro.value, retro.note)
+        }
+    }
+
+    private func tile(_ label: String, _ value: String, _ note: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Sky.label(label)
+            Text(value)
+                .font(.system(size: 19, weight: .bold))
+                .monospacedDigit()
+                .foregroundStyle(Sky.text)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+            Text(note).font(.system(size: 12)).monospacedDigit().foregroundStyle(Sky.secondary).lineLimit(1)
+        }
+        .padding(11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Sky.tile, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .accessibilityElement(children: .combine)
+    }
+
+    private func retrograde(_ body: Ephemeris.Body) -> (title: String, value: String, note: String) {
+        guard let period = Ephemeris.retrogradePeriod(body, near: days) else { return ("Retrograde", "Never", "always direct") }
+        if days >= period.start { return ("Retrograde", "Now", "until \(shortDate(period.end))") }
+        return ("Retrograde", shortDate(period.start), "until \(shortDate(period.end))")
+    }
+
+    private func askButton(_ p: Ephemeris.Placement) -> some View {
+        let psychic = app.matchedPsychic
+        return Button {
+            let when = Int(offset.rounded()) == 0 ? "right now" : "on \(date.formatted(date: .long, time: .omitted))"
+            let question = "\(p.body.name) is in \(p.sign.name)\(p.retrograde ? " and retrograde" : "") \(when). What does that mean for me?"
+            let sky = placements.map { "\($0.body.name) \($0.sign.name) \($0.degreeInSign)°\($0.retrograde ? " retrograde" : "")" }
+                .joined(separator: ", ")
+            let note = "[The user is looking at the sky in the app's cosmic view, for \(date.formatted(date: .long, time: .omitted)). Positions: \(sky). Read it for them in your own voice; keep it fun.]"
+            onAsk(question, note)
+            dismiss()
+        } label: {
+            HStack(spacing: 10) {
+                AvatarView(psychic: psychic, size: 28)
+                Text("Ask \(psychic.short) what it means")
+            }
+        }
+        .buttonStyle(SkyButtonStyle())
     }
 
     /// The sign the selected body is in, so crossing into a new sign can be felt.

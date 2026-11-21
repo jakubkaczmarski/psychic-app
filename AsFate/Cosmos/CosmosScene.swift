@@ -215,7 +215,7 @@ final class CosmosScene {
         let sun = SCNNode()
         sun.name = "sun"
         let sphere = SCNSphere(radius: 0.9)
-        sphere.segmentCount = 72
+        sphere.segmentCount = 128
         let m = SCNMaterial()
         m.lightingModel = .constant
         m.diffuse.contents = PlanetTextures.texture(for: .sun)
@@ -278,7 +278,7 @@ final class CosmosScene {
         node.name = body.rawValue
 
         let sphere = SCNSphere(radius: planetSize(body))
-        sphere.segmentCount = 48
+        sphere.segmentCount = 96
         let m = SCNMaterial()
         // Matte (diffuse only): no specular hotspot blowing out the day side.
         m.lightingModel = .lambert
@@ -297,7 +297,7 @@ final class CosmosScene {
 
         if body == .earth, let clouds = PlanetTextures.earthClouds {
             let layer = SCNSphere(radius: planetSize(body) * 1.015)
-            layer.segmentCount = 48
+            layer.segmentCount = 96
             let cm = SCNMaterial()
             cm.lightingModel = .lambert
             cm.diffuse.contents = clouds
@@ -312,7 +312,7 @@ final class CosmosScene {
         // Atmosphere rim for the planets that have one.
         if [.earth, .venus, .uranus, .neptune, .jupiter, .saturn].contains(body) {
             let rim = SCNSphere(radius: planetSize(body) * 1.06)
-            rim.segmentCount = 48
+            rim.segmentCount = 96
             let am = SCNMaterial()
             am.lightingModel = .constant
             am.diffuse.contents = color.withAlphaComponent(0)
@@ -348,7 +348,7 @@ final class CosmosScene {
 
     private func buildMoon() {
         let sphere = SCNSphere(radius: 0.16)
-        sphere.segmentCount = 32
+        sphere.segmentCount = 64
         let m = SCNMaterial()
         m.lightingModel = .lambert
         m.diffuse.contents = PlanetTextures.texture(for: .moon)
@@ -381,15 +381,19 @@ final class CosmosScene {
     }
 
     private func buildSelectionRing() {
-        let size = CGSize(width: 256, height: 256)
-        let image = UIGraphicsImageRenderer(size: size).image { ctx in
+        // A hairline with a faint halo, drawn large so it stays crisp when the ring fills the screen.
+        let size = CGSize(width: 1024, height: 1024)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let image = UIGraphicsImageRenderer(size: size, format: format).image { ctx in
             let c = ctx.cgContext
-            c.setStrokeColor(UIColor(NightTheme.gold).cgColor)
+            let circle = CGRect(x: 24, y: 24, width: 976, height: 976)
+            c.setStrokeColor(UIColor.white.withAlphaComponent(0.1).cgColor)
+            c.setLineWidth(18)
+            c.strokeEllipse(in: circle)
+            c.setStrokeColor(UIColor.white.withAlphaComponent(0.85).cgColor)
             c.setLineWidth(5)
-            c.strokeEllipse(in: CGRect(x: 14, y: 14, width: 228, height: 228))
-            c.setStrokeColor(UIColor(NightTheme.gold).withAlphaComponent(0.25).cgColor)
-            c.setLineWidth(14)
-            c.strokeEllipse(in: CGRect(x: 14, y: 14, width: 228, height: 228))
+            c.strokeEllipse(in: circle)
         }
         let plane = SCNPlane(width: 1, height: 1)
         let m = SCNMaterial()
@@ -403,8 +407,8 @@ final class CosmosScene {
         ring.constraints = [SCNBillboardConstraint()]
         // Breathes gently so the eye finds it.
         ring.runAction(.repeatForever(.sequence([
-            .group([.scale(to: 1.12, duration: 1.1), .fadeOpacity(to: 0.55, duration: 1.1)]),
-            .group([.scale(to: 1, duration: 1.1), .fadeOpacity(to: 1, duration: 1.1)]),
+            .group([.scale(to: 1.06, duration: 1.4), .fadeOpacity(to: 0.45, duration: 1.4)]),
+            .group([.scale(to: 1, duration: 1.4), .fadeOpacity(to: 0.9, duration: 1.4)]),
         ])))
         selectionRing.addChildNode(ring)
         selectionRing.isHidden = true
@@ -422,7 +426,8 @@ final class CosmosScene {
 
     /// Ring around the selected body; its orbit drawn bright and the other orbits dimmed.
     private func updateSelection(_ selected: Ephemeris.Body?, days d: Double) {
-        if let selected, let node = bodyNodes[selected] {
+        // The Sun needs no marker: it's the brightest thing on screen, and a ring fights with its glow.
+        if let selected, selected != .sun, let node = bodyNodes[selected] {
             selectionRing.position = node.position
             selectionRing.isHidden = false
         } else {

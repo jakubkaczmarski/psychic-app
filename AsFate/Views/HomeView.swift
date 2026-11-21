@@ -18,61 +18,40 @@ struct HomeView: View {
         }
     }
 
+    /// From this width up (an unfolded iPhone Duo, or any phone turned wide enough) the screen
+    /// splits into two columns: today's card and the sky on the left, the psychics on the right.
+    private static let wideWidth: CGFloat = 620
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 26) {
-                header
-
-                VStack(alignment: .leading, spacing: 12) {
-                    if let greetLine {
-                        Text(greetLine)
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(Theme.gold)
-                    }
-                    Text("Ask anything.\nThe cards are listening.")
-                        .font(Theme.display(40, .medium))
-                        .foregroundStyle(Theme.textBright)
-                    Text("Pick a psychic for a playful reading on love, work, or whatever is on your mind tonight.")
-                        .font(.system(size: 16))
-                        .foregroundStyle(Theme.muted)
-                        .lineSpacing(3)
-                    Flourish().padding(.top, 6)
-                }
-
-                DailyCardTile()
-                CosmosTile { showCosmos = true }
-                if !app.morningMessagesOn && !app.morningPromptDismissed {
-                    morningPrompt
-                }
-                modeBanner
-
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack {
-                        EyebrowText("Psychics online")
-                        Spacer()
-                        HStack(spacing: 6) {
-                            OnlineDot()
-                            Text("\(Catalog.psychics.count) available")
+        GeometryReader { geo in
+            let wide = geo.size.width >= Self.wideWidth
+            ScrollView {
+                VStack(alignment: .leading, spacing: 26) {
+                    header
+                    if wide {
+                        HStack(alignment: .top, spacing: 28) {
+                            VStack(alignment: .leading, spacing: 22) {
+                                hero
+                                tiles
+                            }
+                            .frame(width: (geo.size.width - 40 - 28) * 0.46)
+                            psychics
                         }
-                        .font(.system(size: 13))
-                        .foregroundStyle(Theme.online)
+                    } else {
+                        hero
+                        tiles
+                        psychics
                     }
-                    ForEach(Catalog.psychics) { p in
-                        NavigationLink(value: Route.profile(p.id)) {
-                            PsychicRow(psychic: p)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
 
-                Text("For entertainment only.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.faint)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: .infinity)
+                    Text("For entertainment only.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.faint)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity)
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 24)
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 24)
         }
         .background(Theme.bg)
         .toolbar(.hidden, for: .navigationBar)
@@ -95,6 +74,59 @@ struct HomeView: View {
                 .presentationDetents([.large])
         }
         .task { await app.checkServer() }
+    }
+
+    private var hero: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let greetLine {
+                Text(greetLine)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Theme.gold)
+            }
+            Text("Ask anything.\nThe cards are listening.")
+                .font(Theme.display(40, .medium))
+                .foregroundStyle(Theme.textBright)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Pick a psychic for a playful reading on love, work, or whatever is on your mind tonight.")
+                .font(.system(size: 16))
+                .foregroundStyle(Theme.muted)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+            Flourish().padding(.top, 6)
+        }
+    }
+
+    /// Today's card, the sky, and the smaller prompts under them.
+    private var tiles: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            DailyCardTile()
+            CosmosTile { showCosmos = true }
+            if !app.morningMessagesOn && !app.morningPromptDismissed {
+                morningPrompt
+            }
+            modeBanner
+        }
+    }
+
+    private var psychics: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                EyebrowText("Psychics online")
+                Spacer()
+                HStack(spacing: 6) {
+                    OnlineDot()
+                    Text("\(Catalog.psychics.count) available")
+                }
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.online)
+            }
+            ForEach(Catalog.psychics) { p in
+                NavigationLink(value: Route.profile(p.id)) {
+                    PsychicRow(psychic: p)
+                }
+                .buttonStyle(.plain)
+            }
+        }
     }
 
     private var header: some View {

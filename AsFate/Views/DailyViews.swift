@@ -14,7 +14,8 @@ struct DailyCardTile: View {
                 EyebrowText("Card of the day")
                 Spacer()
                 if app.dailyStreak > 0 {
-                    Text("🔥 \(app.dailyStreak) day\(app.dailyStreak == 1 ? "" : "s")")
+                    Label("\(app.dailyStreak) day\(app.dailyStreak == 1 ? "" : "s")", systemImage: "flame.fill")
+                        .labelStyle(.titleAndIcon)
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Theme.gold)
                         .padding(.horizontal, 10).padding(.vertical, 4)

@@ -49,7 +49,7 @@ enum Analytics {
     static func track(_ event: Event, _ parameters: [String: String] = [:]) {
         #if DEBUG
         let params = parameters.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " ")
-        print("📊 \(event.rawValue) \(params)")
+        print("[analytics] \(event.rawValue) \(params)")
         #endif
         guard started else { return }
         TelemetryDeck.signal(event.rawValue, parameters: parameters)

@@ -62,7 +62,7 @@ struct WelcomeStep: View {
                 AvatarView(psychic: selene, size: 32)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(selene.name).font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.lilac)
-                    Text("The moon says yes, darling. But send it tomorrow morning, not at 2am. 🌙")
+                    Text("The moon says yes, darling. But send it tomorrow morning, not at 2am.")
                         .font(.system(size: 15))
                         .foregroundStyle(Theme.text)
                 }
@@ -92,7 +92,7 @@ struct GoalStep: View {
                                      subtitle: "We'll match you with the psychic who knows it best.")
                     VStack(spacing: 10) {
                         ForEach(OnboardingCatalog.goals) { g in
-                            OptionRow(emoji: g.emoji, label: g.label, selected: selection == g.id) {
+                            OptionRow(symbol: g.symbol, label: g.label, selected: selection == g.id) {
                                 withAnimation(.easeOut(duration: 0.2)) { selection = g.id }
                             }
                         }
@@ -125,7 +125,7 @@ struct PainsStep: View {
                                      subtitle: "Pick all that fit. Your psychic will keep it in mind.")
                     VStack(spacing: 10) {
                         ForEach(OnboardingCatalog.pains) { p in
-                            OptionRow(emoji: p.emoji, label: p.label, selected: selection.contains(p.id), multi: true) {
+                            OptionRow(symbol: p.symbol, label: p.label, selected: selection.contains(p.id), multi: true) {
                                 if selection.contains(p.id) { selection.remove(p.id) } else { selection.insert(p.id) }
                             }
                         }

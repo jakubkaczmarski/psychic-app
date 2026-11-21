@@ -4,7 +4,8 @@ import SwiftUI
 
 struct OnboardingGoal: Identifiable, Hashable {
     let id: String
-    let emoji: String
+    /// SF Symbol name.
+    let symbol: String
     let label: String
     /// Used in sentences: "What do they say about {topic}?"
     let topic: String
@@ -18,33 +19,34 @@ struct OnboardingGoal: Identifiable, Hashable {
 
 struct OnboardingPain: Identifiable, Hashable {
     let id: String
-    let emoji: String
+    /// SF Symbol name.
+    let symbol: String
     let label: String
 }
 
 enum OnboardingCatalog {
     static let goals: [OnboardingGoal] = [
-        .init(id: "love", emoji: "💘", label: "Love & relationships", topic: "my love life", yourTopic: "your love life", psychicID: "selene",
+        .init(id: "love", symbol: "heart", label: "Love & relationships", topic: "my love life", yourTopic: "your love life", psychicID: "selene",
               matchReason: "Matters of the heart are Selene's whole world. She reads the moon, and your texts."),
-        .init(id: "work", emoji: "💼", label: "Work & money", topic: "my work life", yourTopic: "your work life", psychicID: "kaz",
+        .init(id: "work", symbol: "briefcase", label: "Work & money", topic: "my work life", yourTopic: "your work life", psychicID: "kaz",
               matchReason: "Kaz reads careers like a quarterly report. Blunt, fast, and weirdly useful."),
-        .init(id: "decision", emoji: "🔀", label: "A big decision", topic: "the decision I'm facing", yourTopic: "your big decision", psychicID: "ivy",
+        .init(id: "decision", symbol: "arrow.triangle.branch", label: "A big decision", topic: "the decision I'm facing", yourTopic: "your big decision", psychicID: "ivy",
               matchReason: "Grandma Ivy has talked half her town through big choices, one cup of tea at a time."),
-        .init(id: "family", emoji: "🏡", label: "Family & friends", topic: "the people close to me", yourTopic: "the people close to you", psychicID: "mirela",
+        .init(id: "family", symbol: "house", label: "Family & friends", topic: "the people close to me", yourTopic: "the people close to you", psychicID: "mirela",
               matchReason: "Mirela reads family the way she reads cards: with love and total honesty."),
-        .init(id: "self", emoji: "🌱", label: "Figuring out what I want", topic: "where I'm headed", yourTopic: "where you're headed", psychicID: "selene",
+        .init(id: "self", symbol: "leaf", label: "Figuring out what I want", topic: "where I'm headed", yourTopic: "where you're headed", psychicID: "selene",
               matchReason: "Selene believes every heart has a tide. She'll help you find which way yours is pulling."),
-        .init(id: "fun", emoji: "✨", label: "Just curious, for fun", topic: "the week ahead", yourTopic: "your week ahead", psychicID: "zephyr",
+        .init(id: "fun", symbol: "sparkles", label: "Just curious, for fun", topic: "the week ahead", yourTopic: "your week ahead", psychicID: "zephyr",
               matchReason: "Zephyr sees everything and explains nothing. The most fun you'll have with a crystal ball."),
     ]
 
     static let pains: [OnboardingPain] = [
-        .init(id: "overthink", emoji: "🌀", label: "I overthink everything"),
-        .init(id: "signals", emoji: "📱", label: "Someone's sending mixed signals"),
-        .init(id: "noone", emoji: "🤐", label: "No one I can really ask"),
-        .init(id: "wrong", emoji: "😬", label: "Scared of choosing wrong"),
-        .init(id: "unsure", emoji: "💭", label: "I don't know what I want"),
-        .init(id: "repeat", emoji: "🔁", label: "The same thing keeps happening"),
+        .init(id: "overthink", symbol: "tornado", label: "I overthink everything"),
+        .init(id: "signals", symbol: "iphone", label: "Someone's sending mixed signals"),
+        .init(id: "noone", symbol: "person.fill.questionmark", label: "No one I can really ask"),
+        .init(id: "wrong", symbol: "exclamationmark.triangle", label: "Scared of choosing wrong"),
+        .init(id: "unsure", symbol: "questionmark.bubble", label: "I don't know what I want"),
+        .init(id: "repeat", symbol: "repeat", label: "The same thing keeps happening"),
     ]
 
     static let positions = ["Past", "Present", "Future"]
@@ -218,7 +220,8 @@ struct OnboardingHeader: View {
 }
 
 struct OptionRow: View {
-    let emoji: String
+    /// SF Symbol name.
+    let symbol: String
     let label: String
     let selected: Bool
     var multi = false
@@ -227,7 +230,11 @@ struct OptionRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 14) {
-                Text(emoji).font(.system(size: 24))
+                Image(systemName: symbol)
+                    .font(.system(size: 20))
+                    .foregroundStyle(Theme.gold)
+                    .frame(width: 28)
+                    .accessibilityHidden(true)
                 Text(label)
                     .font(.system(size: 17, weight: .medium))
                     .foregroundStyle(Theme.textBright)

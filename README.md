@@ -105,7 +105,7 @@ Funnel events go to [TelemetryDeck](https://telemetrydeck.com) (`AsFate/Analytic
 Day 1 and day 7 retention are the share of installs that send `App.activeDay` with `daysSinceInstall` 1 and 7. Messages per visit come from the highest `messageInVisit`. Never add names, questions or chat text as parameters.
 
 ### Five distinct psychics
-Each psychic has a character bible in `server/src/psychics.ts`: backstory, voice, reply length, catchphrases, things they never say, quirks, opinions of the other four, and example replies. Change a personality there; the app doesn't need an update.
+Each psychic has a character bible as markdown files in `server/psychics/<id>/`: backstory, voice, reply length, catchphrases, things they never say, quirks, opinions of the other four, and example replies, plus any extra documents you add (lore, beliefs, memories). Change a personality there and restart the server; the app doesn't need an update. The format is in [server/psychics/README.md](server/psychics/README.md).
 
 | Psychic | Voice | Ritual (button in the chat) |
 | --- | --- | --- |
@@ -149,7 +149,7 @@ A 3D view of the solar system for any date (`AsFate/Cosmos/`), opened from the *
 ### Texting like a person
 Replies are written and delivered like real texts, not one polished answer.
 
-- **Writing**: each psychic has a `texting` style in `server/src/psychics.ts`. Kaz sends two-word bursts, Zephyr writes all lowercase and now and then fixes a typo with "*", Ivy adds "Oh, and…" afterthoughts and sometimes signs off "love, Ivy x", and Mirela often asks something back first. Shared rules ask for short messages (under about 20 words), no restating the question, no tidy summaries, and varied openings.
+- **Writing**: each psychic has a `## Texting` section in `server/psychics/<id>/persona.md`. Kaz sends two-word bursts, Zephyr writes all lowercase and now and then fixes a typo with "*", Ivy adds "Oh, and…" afterthoughts and sometimes signs off "love, Ivy x", and Mirela often asks something back first. Shared rules ask for short messages (under about 20 words), no restating the question, no tidy summaries, and varied openings.
 - **Bubbles**: the server separates messages with blank lines; the app (`AppState.respond`) splits them into separate chat bubbles, at most 5.
 - **Rhythm**: the user's message is marked **Seen** after a short "reading" pause, then a typing bubble appears and each message arrives after a delay based on its length and the psychic's typing speed (`typingSpeed` and `readDelay` in `AsFate/Rituals.swift`). Ivy types slowly; Kaz and Zephyr are quick. The reply is fetched while the psychic "reads", so the wait isn't longer than before.
 
@@ -163,7 +163,7 @@ Screens say "For entertainment only" without labelling the psychics as AI, for a
 | `GET /health` | Returns `{ ok: true, model }` |
 | `POST /v1/reading` | Takes `{ psychicId, userName, sign, messages, memory?, mood? }` and streams newline-delimited JSON: `{"type":"text","text":…}` pieces, then `{"type":"done"}` or `{"type":"error","code","message"}` |
 
-- The psychics' instructions live in `server/src/psychics.ts`. The app sends only the chat, so it can't be used as a free general-purpose Claude proxy.
+- The psychics' instructions are built from `server/psychics/` by `server/src/psychics.ts`. The persona part is prompt-cached, so a long character bible costs little after the first reading. The app sends only the chat, so it can't be used as a free general-purpose Claude proxy.
 - `memory` is an optional list of short notes about earlier visits (at most 10, 200 characters each). It's labelled as the user's own words in the instructions, so it can't override the rules.
 - Each request must carry an `x-device-id` header (the app generates one per install). Limits are per device and per IP address over a rolling 24 hours.
 - The server stops the Claude request if the user leaves mid-reading, so you don't pay for unread tokens.

@@ -1,6 +1,6 @@
 import http from "node:http";
 import Anthropic from "@anthropic-ai/sdk";
-import { PSYCHICS, STAR_SIGNS, systemPrompt } from "./psychics.ts";
+import { PSYCHICS, STAR_SIGNS, personaPrompt, readerPrompt } from "./psychics.ts";
 
 // ---- Config (environment variables) ----
 const PORT = Number(process.env.PORT ?? 8787);
@@ -168,7 +168,12 @@ async function handleReading(req: http.IncomingMessage, res: http.ServerResponse
   const stream = client.beta.messages.stream({
     model: MODEL,
     max_tokens: 2000,
-    system: systemPrompt(persona, parsed.userName, parsed.sign, parsed.memory, parsed.mood),
+    system: [
+      // The persona is identical for every reading with this psychic, so it's cached:
+      // later readings pay about a twentieth of the input price for it.
+      { type: "text", text: personaPrompt(persona), cache_control: { type: "ephemeral" } },
+      { type: "text", text: readerPrompt(parsed.userName, parsed.sign, parsed.memory, parsed.mood) },
+    ],
     messages: parsed.messages,
     output_config: { effort: "low" },
     // If Claude declines, the API re-runs the request on a fallback model automatically.

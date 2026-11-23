@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Psychic Studio</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <main id="login" class="login" hidden>
+    <form id="login-form" class="login-card">
+      <h1>Psychic Studio</h1>
+      <p>Where the psychics' characters are written.</p>
+      <label for="password">Password</label>
+      <input id="password" type="password" autocomplete="current-password" required autofocus>
+      <p id="login-error" class="error" role="alert"></p>
+      <button class="primary" type="submit">Sign in</button>
+    </form>
+  </main>
+
+  <div id="app" class="layout" hidden>
+    <nav class="sidebar" aria-label="Psychics">
+      <div class="brand">Psychic Studio</div>
+      <ul id="psychic-list" class="psychic-list"></ul>
+      <button id="new-psychic" class="ghost" type="button">New psychic</button>
+      <button id="sign-out" class="link" type="button">Sign out</button>
+    </nav>
+    <section id="editor" class="editor" aria-live="polite"></section>
+  </div>
+
+  <dialog id="new-dialog">
+    <form id="new-form" method="dialog">
+      <h2>New psychic</h2>
+      <label for="new-name">Name</label>
+      <input id="new-name" required maxlength="200" placeholder="Auntie Luna" autocomplete="off">
+      <p class="hint row"><span id="new-id-preview"></span> <button id="new-id-edit" class="link" type="button">Change id</button></p>
+      <div id="new-id-field" hidden>
+        <label for="new-id">Id</label>
+        <input id="new-id" maxlength="32" placeholder="luna" autocomplete="off">
+        <p class="hint">Lowercase letters, numbers and dashes. The app uses it to pick this psychic, and it can't be changed later.</p>
+      </div>
+      <p class="hint">You'll fill in their character next. Note: the iOS app needs an update before users can choose a new psychic.</p>
+      <p id="new-error" class="error" role="alert"></p>
+      <div class="row end">
+        <button type="button" class="ghost" id="new-cancel">Cancel</button>
+        <button type="submit" class="primary">Create psychic</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>

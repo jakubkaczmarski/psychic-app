@@ -122,7 +122,89 @@ export function loadPsychics(root: string = PSYCHICS_DIR): Record<string, Psychi
   return psychics;
 }
 
-export const PSYCHICS: Record<string, PsychicPersona> = loadPsychics();
+// ---- Where personas come from ----
+// With PERSONA_STUDIO_URL set, personas are fetched from Psychic Studio (studio/) and refreshed every minute.
+// The markdown files above are the fallback: used at startup until the studio answers, and kept if it's down.
+const STUDIO_URL = (process.env.PERSONA_STUDIO_URL ?? "").replace(/\/+$/, "");
+const STUDIO_TOKEN = process.env.PERSONA_STUDIO_TOKEN ?? "";
+const REFRESH_MS = 60_000;
+
+let psychics: Record<string, PsychicPersona> = {};
+let source: "files" | "studio" | "none" = "none";
+let lastStudioError: string | null = null;
+
+try {
+  psychics = loadPsychics();
+  source = "files";
+} catch (err) {
+  if (!STUDIO_URL) throw err;
+  console.warn(`No local persona files (${(err as Error).message}); waiting for Psychic Studio.`);
+}
+
+export function getPsychic(id: string): PsychicPersona | undefined {
+  return Object.hasOwn(psychics, id) ? psychics[id] : undefined;
+}
+
+export function personaStatus() {
+  return { source, count: Object.keys(psychics).length, studioError: lastStudioError };
+}
+
+const isText = (v: unknown): v is string => typeof v === "string" && v.trim().length > 0;
+const isTextList = (v: unknown): v is string[] => Array.isArray(v) && v.length > 0 && v.every(isText);
+
+function isPersona(v: unknown): v is PsychicPersona {
+  if (!v || typeof v !== "object") return false;
+  const p = v as Record<string, unknown>;
+  const texts = ["name", "specialty", "backstory", "voice", "texting", "quirks", "others", "ritual"];
+  return (
+    texts.every((k) => isText(p[k])) &&
+    isTextList(p.catchphrases) &&
+    isTextList(p.never) &&
+    Array.isArray(p.examples) && p.examples.length > 0 &&
+    p.examples.every((e) => e && isText(e.user) && isText(e.reply)) &&
+    Array.isArray(p.notes) &&
+    p.notes.every((n) => n && typeof n.title === "string" && typeof n.body === "string")
+  );
+}
+
+async function refreshFromStudio(): Promise<void> {
+  try {
+    const res = await fetch(`${STUDIO_URL}/v1/personas`, {
+      headers: { authorization: `Bearer ${STUDIO_TOKEN}` },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const body = (await res.json()) as { psychics?: Record<string, unknown> };
+    const next: Record<string, PsychicPersona> = {};
+    for (const [id, persona] of Object.entries(body.psychics ?? {})) {
+      if (isPersona(persona)) next[id] = { ...persona, notes: persona.notes ?? [] };
+      else console.warn(`Psychic Studio sent an incomplete persona for "${id}"; skipped.`);
+    }
+    if (!Object.keys(next).length) throw new Error("no complete psychics");
+
+    const changed = JSON.stringify(next) !== JSON.stringify(psychics);
+    psychics = next;
+    if (source !== "studio" || changed) {
+      console.log(`Personas loaded from Psychic Studio: ${Object.keys(next).join(", ")}.`);
+    }
+    source = "studio";
+    lastStudioError = null;
+  } catch (err) {
+    const message = (err as Error).message;
+    if (message !== lastStudioError) {
+      console.error(`Couldn't fetch personas from Psychic Studio (${message}); keeping the ${source} personas.`);
+    }
+    lastStudioError = message;
+  }
+}
+
+/** Fetches personas from Psychic Studio now and then every minute. Does nothing without PERSONA_STUDIO_URL. */
+export async function startPersonaSync(): Promise<void> {
+  if (!STUDIO_URL) return;
+  if (!STUDIO_TOKEN) console.warn("PERSONA_STUDIO_TOKEN is not set: Psychic Studio will refuse the request.");
+  await refreshFromStudio();
+  setInterval(refreshFromStudio, REFRESH_MS).unref();
+}
 
 export const STAR_SIGNS = new Set([
   "Aries", "Taurus", "Gemini", "Cancer", "Leo", "Virgo",

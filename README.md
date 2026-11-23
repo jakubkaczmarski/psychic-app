@@ -160,7 +160,7 @@ Screens say "For entertainment only" without labelling the psychics as AI, for a
 
 | Endpoint | What it does |
 | --- | --- |
-| `GET /health` | Returns `{ ok: true, model }` |
+| `GET /health` | Returns `{ ok: true, model, personas }`, where `personas` says whether they came from the files or Psychic Studio |
 | `POST /v1/reading` | Takes `{ psychicId, userName, sign, messages, memory?, mood? }` and streams newline-delimited JSON: `{"type":"text","text":…}` pieces, then `{"type":"done"}` or `{"type":"error","code","message"}` |
 
 - The psychics' instructions are built from `server/psychics/` by `server/src/psychics.ts`. The persona part is prompt-cached, so a long character bible costs little after the first reading. The app sends only the chat, so it can't be used as a free general-purpose Claude proxy.
@@ -178,13 +178,28 @@ Environment variables:
 | `MOONLIT_MODEL` | `claude-opus-5-5` | Model used for readings |
 | `DEVICE_DAILY_LIMIT` | `40` | Readings per device per 24 h |
 | `IP_DAILY_LIMIT` | `200` | Readings per IP address per 24 h |
+| `PERSONA_STUDIO_URL` | (empty) | Optional. Fetch personas from Psychic Studio instead of `server/psychics/`, refreshed every minute. The files stay the fallback. |
+| `PERSONA_STUDIO_TOKEN` | (empty) | The studio's `STUDIO_READ_TOKEN` |
 | `MOONLIT_APP_KEY` | (empty) | Optional shared key the app must send in `x-moonlit-key`. Set the same value in `ReadingClient.appKey`. It deters casual misuse but isn't real security. |
 
 Rate limits are kept in memory, so they reset when the server restarts and only work with a single instance. Move them to Redis or a database before scaling out.
 
+## Psychic Studio (`studio/`)
+
+A separate service with a web interface for writing each psychic's persona, example replies and background documents. The iOS app never talks to it: the reading server fetches finished personas from it, so an edit reaches readings within a minute without a deploy. Setup and details are in [studio/README.md](studio/README.md).
+
+```
+iOS app ──► reading server (server/) ──► Claude
+                  │ GET /v1/personas every minute
+                  ▼
+           Psychic Studio (studio/) ◄── editors, in the browser
+```
+
 ## Deploying
 
 The server runs on any Node 22.18+ host with `npm start`; Railway, Render and Fly.io all work. Set `ANTHROPIC_API_KEY` in the host's dashboard, then put the public URL in `ReadingClient.defaultServerURL` (or in the app's Settings while testing).
+
+To use Psychic Studio, deploy `studio/` as a second service with a persistent volume for its database (see [studio/README.md](studio/README.md)), then set `PERSONA_STUDIO_URL` and `PERSONA_STUDIO_TOKEN` on the reading server.
 
 ## App layout
 

@@ -23,6 +23,7 @@ if (db.isEmpty()) {
   const n = seedFrom(seedDir);
   if (n) console.log(`Imported ${n} psychics from ${seedDir}.`);
 }
+db.ensureHistory();
 
 // ---- Limits ----
 const MAX_FIELD = 10_000;
@@ -181,12 +182,23 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
       db.replaceExamples(id, parseExamples((await readJSON(req)).examples));
       return send(res, 200, { psychic: withStatus(db.getPsychic(id)!) });
     }
+    if (parts[2] === "history" && method === "GET") {
+      return send(res, 200, { history: db.history(id) });
+    }
     if (parts[2] === "documents" && method === "POST") {
       const body = await readJSON(req);
       const title = text(body.title ?? "", "Title", MAX_TITLE);
       const docId = db.createDocument(id, title, text(body.body ?? "", "Document", MAX_DOC));
       return send(res, 201, { document: db.getDocument(docId) });
     }
+  }
+
+  // /api/versions/:id/restore
+  if (parts[0] === "versions" && parts[2] === "restore" && method === "POST") {
+    const id = db.restore(Number(parts[1]));
+    if (!id) return fail(res, 404, "No such version.");
+    const psychic = db.getPsychic(id)!;
+    return send(res, 200, { psychic: { ...psychic, missing: db.missingParts(psychic), published: db.publish(psychic) } });
   }
 
   // /api/documents/:docId

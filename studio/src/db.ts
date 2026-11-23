@@ -76,6 +76,16 @@ db.exec(`
     enabled INTEGER NOT NULL DEFAULT 1,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
+  CREATE TABLE IF NOT EXISTS revisions (
+    id INTEGER PRIMARY KEY,
+    psychic_id TEXT NOT NULL REFERENCES psychics(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    label TEXT NOT NULL,
+    snapshot TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS revisions_psychic ON revisions (psychic_id, id);
 `);
 
 let txDepth = 0;
@@ -159,7 +169,10 @@ export function getPsychic(id: string): Psychic | null {
 }
 
 export function createPsychic(id: string, name: string) {
-  db.prepare("INSERT INTO psychics (id, name) VALUES (?, ?)").run(id, name);
+  tx(() => {
+    db.prepare("INSERT INTO psychics (id, name) VALUES (?, ?)").run(id, name);
+    record(id, "created", "Created");
+  });
 }
 
 export function updatePersona(id: string, persona: Persona) {
@@ -171,6 +184,7 @@ export function updatePersona(id: string, persona: Persona) {
     JSON.stringify(persona.catchphrases), JSON.stringify(persona.never),
     persona.quirks, persona.others, persona.ritual, id,
   );
+  record(id, "persona", "Edited the persona", true);
 }
 
 export function deletePsychic(id: string) {
@@ -183,6 +197,7 @@ export function replaceExamples(id: string, examples: Example[]) {
     const insert = db.prepare("INSERT INTO examples (psychic_id, position, user, reply) VALUES (?, ?, ?, ?)");
     examples.forEach((e, i) => insert.run(id, i, e.user, e.reply));
     touch(id);
+    record(id, "examples", "Edited the examples", true);
   });
 }
 
@@ -197,15 +212,24 @@ export function createDocument(psychicId: string, title: string, body: string): 
       .prepare("INSERT INTO documents (psychic_id, title, body) VALUES (?, ?, ?)")
       .run(psychicId, title, body);
     touch(psychicId);
+    record(psychicId, "doc-add", title ? `Added “${title}”` : "Added a document");
     return Number(result.lastInsertRowid);
   });
 }
 
 export function updateDocument(docId: number, title: string, body: string, enabled: boolean) {
+  const before = getDocument(docId);
+  if (!before) return;
   tx(() => {
     db.prepare("UPDATE documents SET title = ?, body = ?, enabled = ?, updated_at = datetime('now') WHERE id = ?")
       .run(title, body, enabled ? 1 : 0, docId);
-    touch(getDocument(docId)!.psychicId);
+    touch(before.psychicId);
+    const name = title || "Untitled";
+    if (before.enabled !== enabled) {
+      record(before.psychicId, "doc-toggle", enabled ? `Switched “${name}” on` : `Switched “${name}” off`);
+    } else {
+      record(before.psychicId, `doc:${docId}`, `Edited “${name}”`, true);
+    }
   });
 }
 
@@ -215,6 +239,7 @@ export function deleteDocument(docId: number) {
   tx(() => {
     db.prepare("DELETE FROM documents WHERE id = ?").run(docId);
     touch(doc.psychicId);
+    record(doc.psychicId, "doc-delete", `Deleted “${doc.title || "Untitled"}”`);
   });
 }
 
@@ -259,9 +284,151 @@ export function publishedPersonas(): Record<string, PublishedPersona> {
 
 export function importPsychic(id: string, persona: Persona, examples: Example[], docs: { title: string; body: string }[]) {
   tx(() => {
-    createPsychic(id, persona.name);
-    updatePersona(id, persona);
-    replaceExamples(id, examples);
-    for (const d of docs) createDocument(id, d.title, d.body);
+    quietly(() => {
+      createPsychic(id, persona.name);
+      updatePersona(id, persona);
+      replaceExamples(id, examples);
+      for (const d of docs) createDocument(id, d.title, d.body);
+    });
+    record(id, "imported", "Imported from the markdown files");
   });
+}
+
+// ---- History ----
+// Every change saves a snapshot of the whole psychic. Autosaves to the same part within
+// GROUP_MINUTES of each other update one version instead of making a new one each time.
+const GROUP_MINUTES = 10;
+const KEEP_VERSIONS = 150;
+
+interface Snapshot extends Persona {
+  examples: Example[];
+  documents: { id: number; title: string; body: string; enabled: boolean }[];
+}
+
+let quietDepth = 0;
+function quietly(fn: () => void) {
+  quietDepth++;
+  try {
+    fn();
+  } finally {
+    quietDepth--;
+  }
+}
+
+function snapshotOf(id: string): Snapshot | null {
+  const p = getPsychic(id);
+  if (!p) return null;
+  const persona = {} as Persona;
+  for (const f of PERSONA_FIELDS) persona[f] = p[f];
+  for (const f of LIST_FIELDS) persona[f] = p[f];
+  return {
+    ...persona,
+    examples: p.examples,
+    documents: p.documents.map((d) => ({ id: d.id, title: d.title, body: d.body, enabled: d.enabled })),
+  };
+}
+
+function record(psychicId: string, kind: string, label: string, group = false) {
+  if (quietDepth > 0) return;
+  const snapshot = snapshotOf(psychicId);
+  if (!snapshot) return;
+  const json = JSON.stringify(snapshot);
+  const last = db
+    .prepare(`SELECT id, kind, snapshot, (julianday('now') - julianday(updated_at)) * 1440 AS age
+              FROM revisions WHERE psychic_id = ? ORDER BY id DESC LIMIT 1`)
+    .get(psychicId) as Row | undefined;
+  if (last && String(last.snapshot) === json) return; // nothing actually changed
+  if (group && last && last.kind === kind && Number(last.age) < GROUP_MINUTES) {
+    db.prepare("UPDATE revisions SET snapshot = ?, updated_at = datetime('now') WHERE id = ?").run(json, Number(last.id));
+    return;
+  }
+  db.prepare("INSERT INTO revisions (psychic_id, kind, label, snapshot) VALUES (?, ?, ?, ?)").run(psychicId, kind, label, json);
+  db.prepare(`DELETE FROM revisions WHERE psychic_id = ? AND id NOT IN
+              (SELECT id FROM revisions WHERE psychic_id = ? ORDER BY id DESC LIMIT ?)`).run(psychicId, psychicId, KEEP_VERSIONS);
+}
+
+/** Gives psychics that predate history a starting version, so their first edit can be undone. */
+export function ensureHistory() {
+  const ids = db
+    .prepare("SELECT id FROM psychics WHERE id NOT IN (SELECT DISTINCT psychic_id FROM revisions)")
+    .all() as Row[];
+  for (const row of ids) record(String(row.id), "start", "Starting point");
+}
+
+const FIELD_LABELS: Record<string, string> = {
+  name: "name", specialty: "specialty", backstory: "backstory", voice: "voice", texting: "texting style",
+  catchphrases: "catchphrases", never: "never list", quirks: "quirks", others: "the other psychics", ritual: "ritual",
+};
+
+/** Plain-language list of what differs between two versions. */
+function describeChanges(before: Snapshot | null, after: Snapshot): string[] {
+  if (!before) return [];
+  const changes: string[] = [];
+  const fields = [...PERSONA_FIELDS, ...LIST_FIELDS].filter(
+    (f) => JSON.stringify(before[f]) !== JSON.stringify(after[f]),
+  );
+  if (fields.length) changes.push(`Changed ${fields.map((f) => FIELD_LABELS[f]).join(", ")}`);
+  const exBefore = before.examples.length, exAfter = after.examples.length;
+  if (JSON.stringify(before.examples) !== JSON.stringify(after.examples)) {
+    changes.push(exAfter > exBefore ? `Added ${exAfter - exBefore} example${exAfter - exBefore === 1 ? "" : "s"}`
+      : exAfter < exBefore ? `Removed ${exBefore - exAfter} example${exBefore - exAfter === 1 ? "" : "s"}`
+      : "Changed examples");
+  }
+  const docName = (d: { title: string }) => `“${d.title || "Untitled"}”`;
+  const oldDocs = new Map(before.documents.map((d) => [d.id, d]));
+  const newDocs = new Map(after.documents.map((d) => [d.id, d]));
+  for (const d of after.documents) {
+    const old = oldDocs.get(d.id);
+    if (!old) changes.push(`Added ${docName(d)}`);
+    else {
+      if (old.title !== d.title || old.body !== d.body) changes.push(`Changed ${docName(d)}`);
+      if (old.enabled !== d.enabled) changes.push(`Switched ${docName(d)} ${d.enabled ? "on" : "off"}`);
+    }
+  }
+  for (const d of before.documents) if (!newDocs.has(d.id)) changes.push(`Removed ${docName(d)}`);
+  return changes;
+}
+
+export function history(psychicId: string) {
+  const rows = db
+    .prepare("SELECT id, kind, label, snapshot, created_at, updated_at FROM revisions WHERE psychic_id = ? ORDER BY id")
+    .all(psychicId) as Row[];
+  let previous: Snapshot | null = null;
+  const out = rows.map((row, i) => {
+    const snap = JSON.parse(String(row.snapshot)) as Snapshot;
+    const entry = {
+      id: Number(row.id),
+      label: String(row.label),
+      startedAt: String(row.created_at),
+      savedAt: String(row.updated_at),
+      changes: describeChanges(previous, snap),
+      current: i === rows.length - 1,
+    };
+    previous = snap;
+    return entry;
+  });
+  return out.reverse();
+}
+
+/** Puts a psychic back the way it was in an earlier version. The restore is itself a new version. */
+export function restore(revisionId: number): string | null {
+  const row = db.prepare("SELECT psychic_id, snapshot FROM revisions WHERE id = ?").get(revisionId) as Row | undefined;
+  if (!row) return null;
+  const id = String(row.psychic_id);
+  const snap = JSON.parse(String(row.snapshot)) as Snapshot;
+  tx(() => {
+    quietly(() => {
+      updatePersona(id, snap);
+      replaceExamples(id, snap.examples);
+      db.prepare("DELETE FROM documents WHERE psychic_id = ?").run(id);
+      // Keep each document's id when it's free, so history can tell a restored document from a new one.
+      const taken = db.prepare("SELECT 1 FROM documents WHERE id = ?");
+      const insert = db.prepare("INSERT INTO documents (id, psychic_id, title, body, enabled) VALUES (?, ?, ?, ?, ?)");
+      for (const d of snap.documents) {
+        insert.run(taken.get(d.id) ? null : d.id, id, d.title, d.body, d.enabled ? 1 : 0);
+      }
+    });
+    record(id, "restore", "Went back to an earlier version");
+  });
+  return id;
 }

@@ -267,6 +267,26 @@ button.add { margin-top: 16px; width: 100%; padding: 12px; border-style: dashed;
 .danger-zone { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line); }
 .danger-zone p { color: var(--muted); font-size: 14px; max-width: 60ch; }
 
+/* History */
+.history { list-style: none; padding: 0; margin: 16px 0 0; border-top: 1px solid var(--line); }
+.version {
+  display: grid;
+  grid-template-columns: 150px 1fr auto;
+  gap: 4px 16px;
+  align-items: baseline;
+  padding: 12px 4px;
+  border-bottom: 1px solid var(--line);
+}
+.version .when { color: var(--muted); font-size: 14px; }
+.version .what { font-size: 15px; }
+.version .what div + div { margin-top: 2px; }
+.version.current .when { color: var(--ink); font-weight: 600; }
+.version .tag { font-size: 13px; color: var(--live); white-space: nowrap; }
+@media (max-width: 760px) {
+  .version { grid-template-columns: 1fr auto; }
+  .version .what { grid-column: 1 / -1; grid-row: 2; }
+}
+
 /* Dialog + toast */
 dialog {
   border: 1px solid var(--line);

@@ -210,7 +210,7 @@ async function route() {
     if (state.list.length) return go(state.list[0].id);
     return renderEmpty();
   }
-  state.tab = ["persona", "examples", "documents"].includes(tab) ? tab : "persona";
+  state.tab = ["persona", "examples", "documents", "history"].includes(tab) ? tab : "persona";
   if (!state.psychic || state.psychic.id !== id) {
     try {
       state.psychic = (await api("GET", `/api/psychics/${encodeURIComponent(id)}`)).psychic;
@@ -275,7 +275,10 @@ function renderEditor() {
         h("span", { id: "save-state", className: "save-state", role: "status", "data-kind": "saved" }, "All changes saved"),
       ),
       h("div", { id: "tab-body" },
-        state.tab === "examples" ? examplesView() : state.tab === "documents" ? documentsView() : personaView()),
+        state.tab === "examples" ? examplesView()
+          : state.tab === "documents" ? documentsView()
+          : state.tab === "history" ? historyView()
+          : personaView()),
     ),
   );
   renderHeader();
@@ -336,6 +339,7 @@ function renderTabs() {
     tab("persona", "Persona"),
     tab("examples", "Examples", complete),
     tab("documents", "Documents", p.documents.filter((d) => d.enabled).length),
+    tab("history", "History"),
   );
 }
 
@@ -640,6 +644,71 @@ function documentsView() {
     p.documents.length
       ? h("ul", { className: "docs" }, rows)
       : h("p", { className: "empty" }, `${p.name || "This psychic"} has no documents yet.`),
+  );
+}
+
+// ---------- History ----------
+const parseTime = (t) => new Date(t.replace(" ", "T") + "Z");
+
+function when(t) {
+  const d = parseTime(t);
+  const mins = Math.round((Date.now() - d) / 60000);
+  if (mins < 1) return "Just now";
+  if (mins < 60) return `${mins} min ago`;
+  const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const today = new Date();
+  const yesterday = new Date(Date.now() - 86400000);
+  if (d.toDateString() === today.toDateString()) return `Today at ${time}`;
+  if (d.toDateString() === yesterday.toDateString()) return `Yesterday at ${time}`;
+  return d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: d.getFullYear() === today.getFullYear() ? undefined : "numeric" }) + ` at ${time}`;
+}
+
+function historyView() {
+  const p = state.psychic;
+  const list = h("ol", { className: "history" }, h("li", { className: "empty" }, "Loading…"));
+
+  const goBack = async (version, currentId) => {
+    if (!(await canLeave())) return;
+    forgetUnsaved();
+    try {
+      const { psychic } = await api("POST", `/api/versions/${version.id}/restore`);
+      state.psychic = psychic;
+      state.examples = psychic.examples.map((e) => ({ ...e }));
+      await refreshList();
+      renderEditor();
+      undoToast(`Went back to the version from ${when(version.savedAt).toLowerCase()}`, async () => {
+        const { psychic: undone } = await api("POST", `/api/versions/${currentId}/restore`);
+        state.psychic = undone;
+        state.examples = undone.examples.map((e) => ({ ...e }));
+        await refreshList();
+        renderEditor();
+        toast("Undone");
+      });
+    } catch (err) {
+      toast(err.message);
+    }
+  };
+
+  api("GET", `/api/psychics/${p.id}/history`).then(({ history }) => {
+    const currentId = history.find((v) => v.current)?.id;
+    list.replaceChildren(
+      ...history.map((v) =>
+        h("li", { className: v.current ? "version current" : "version" },
+          h("div", { className: "when" }, when(v.savedAt)),
+          h("div", { className: "what" },
+            v.changes.length ? v.changes.map((c) => h("div", {}, c)) : h("div", {}, v.label)),
+          v.current
+            ? h("span", { className: "tag" }, "Current version")
+            : h("button", { className: "ghost small", type: "button", onclick: () => goBack(v, currentId) }, "Go back to this"),
+        ),
+      ),
+    );
+  }).catch((err) => list.replaceChildren(h("li", { className: "empty" }, err.message)));
+
+  return h("div", {},
+    h("p", { className: "hint intro" },
+      "Every change is kept here, newest first. Edits made within 10 minutes of each other are grouped into one version. Going back to an earlier version doesn't erase anything: it's added here too, so you can always undo it."),
+    list,
   );
 }
 

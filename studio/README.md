@@ -38,6 +38,10 @@ what's still missing, and each item jumps to its field.
 - **Examples**: short exchanges that show how the psychic texts. Blank lines in a reply become separate bubbles.
 - **Documents**: background notes such as history, beliefs, people in their life or how they read particular cards.
   Write them, upload `.md` / `.txt` files, or drop files onto the page. Each one can be switched off without deleting it.
+- **History**: every version of the psychic, newest first, with what changed in each. Edits made within
+  10 minutes of each other are grouped into one version, and the last 150 versions are kept. "Go back to this"
+  restores an earlier version; the restore is itself a new version, so it can be undone. Deleting a psychic
+  deletes its history too.
 - **New psychic**: readings can use it once the persona and at least one example are filled in. The iOS
   app also needs an update before users can pick it, because the app's list of psychics is built in.
 
@@ -73,7 +77,6 @@ holds the psychics' instructions, so don't leave it open without the password.
 
 ## Not built yet
 
-- Edit history. Every change saves straight away and overwrites the previous version (removed examples can be undone for a few seconds).
 - Several editor accounts. There is one shared password.
 - Trying a reading from the studio before an edit goes live.
 - PDF and Word uploads (only `.md` and `.txt` for now).

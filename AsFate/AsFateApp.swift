@@ -27,6 +27,7 @@ struct AsFateApp: App {
             // Keep a week of morning messages queued up.
             if phase == .active {
                 app.refreshMorningMessages()
+                app.syncPhotos()
                 Analytics.appBecameActive()
             }
         }

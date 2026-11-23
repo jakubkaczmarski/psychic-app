@@ -239,7 +239,9 @@ function renderSidebar() {
     ...state.list.map((p) =>
       h("li", {},
         h("a", { href: `#/${p.id}/persona`, "aria-current": p.id === current ? "page" : null },
-          h("span", { className: p.missing.length ? "dot draft" : "dot", title: p.missing.length ? "Not live yet" : "Live in readings" }),
+          h("span", { className: "avatar-wrap" },
+            avatar(p, "small"),
+            h("span", { className: p.missing.length ? "dot draft" : "dot", title: p.missing.length ? "Not live yet" : "Live in readings" })),
           h("span", { className: "name" }, p.name || p.id),
           h("span", { className: "meta" }, p.missing.length ? "Not live yet" : p.specialty),
         ),
@@ -292,9 +294,14 @@ function renderHeader() {
   if (!el) return;
   const live = !p.missing.length;
   el.replaceChildren(...[
-    h("h1", {}, p.name || p.id),
-    h("div", { className: "specialty" }, p.specialty || "No specialty yet"),
-    p.catchphrases[0] ? h("blockquote", {}, `“${p.catchphrases[0]}”`) : null,
+    h("div", { className: "identity" },
+      photoPicker(p),
+      h("div", {},
+        h("h1", {}, p.name || p.id),
+        h("div", { className: "specialty" }, p.specialty || "No specialty yet"),
+        p.catchphrases[0] ? h("blockquote", {}, `“${p.catchphrases[0]}”`) : null,
+      ),
+    ),
     live
       ? h("div", { className: "status" },
           h("span", { className: "dot" }),
@@ -341,6 +348,87 @@ function renderTabs() {
     tab("documents", "Documents", p.documents.filter((d) => d.enabled).length),
     tab("history", "History"),
   );
+}
+
+// ---------- Photos ----------
+const initials = (name) => (name || "?").replace(/^(madame|grandma|oracle|auntie|the)\s+/i, "").trim().slice(0, 1).toUpperCase();
+
+function avatar(p, size) {
+  return p.photoId
+    ? h("img", { className: `avatar ${size}`, src: `/api/photos/${p.photoId}`, alt: "" })
+    : h("span", { className: `avatar ${size} empty`, "aria-hidden": "true" }, initials(p.name || p.id));
+}
+
+/** Crops to a square from the centre and shrinks to at most 800 px, so photos stay small. */
+async function preparePhoto(file) {
+  const bitmap = await createImageBitmap(file);
+  const side = Math.min(bitmap.width, bitmap.height);
+  const out = Math.min(800, side);
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = out;
+  canvas.getContext("2d").drawImage(bitmap, (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side, 0, 0, out, out);
+  const type = file.type === "image/png" ? "image/png" : "image/jpeg";
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, type, 0.9));
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(binary);
+}
+
+async function uploadPhoto(file) {
+  if (!file) return;
+  if (!/^image\/(png|jpeg|webp|heic|heif|gif)$/.test(file.type)) return toast("Choose a PNG, JPEG or WebP image.");
+  const p = state.psychic;
+  try {
+    toast("Uploading photo…");
+    const data = await preparePhoto(file);
+    const { psychic } = await api("PUT", `/api/psychics/${p.id}/photo`, { data });
+    await applySaved(psychic);
+    toast("Photo saved");
+  } catch (err) {
+    toast(err.message || "That image couldn't be read. Try a PNG or JPEG.");
+  }
+}
+
+function photoPicker(p) {
+  const input = h("input", {
+    type: "file", accept: "image/png,image/jpeg,image/webp", hidden: true,
+    onchange: (e) => { const f = e.target.files[0]; e.target.value = ""; uploadPhoto(f); },
+  });
+  const frame = h("button", {
+    className: "photo", type: "button",
+    title: p.photoId ? "Change photo" : "Add a photo",
+    "aria-label": p.photoId ? `Change ${p.name}'s photo` : `Add a photo of ${p.name}`,
+    onclick: () => input.click(),
+    ondragover: (e) => { e.preventDefault(); frame.classList.add("over"); },
+    ondragleave: () => frame.classList.remove("over"),
+    ondrop: (e) => { e.preventDefault(); frame.classList.remove("over"); uploadPhoto(e.dataTransfer.files[0]); },
+  },
+    avatar(p, "large"),
+    h("span", { className: "photo-label" }, p.photoId ? "Change" : "Add photo"),
+  );
+  const remove = p.photoId
+    ? h("button", {
+        className: "link small remove-photo", type: "button",
+        onclick: async () => {
+          try {
+            const { psychic } = await api("DELETE", `/api/psychics/${p.id}/photo`);
+            await applySaved(psychic);
+            undoToast("Photo removed", async () => {
+              const history = (await api("GET", `/api/psychics/${p.id}/history`)).history;
+              const before = history[1];
+              if (!before) return;
+              const { psychic: back } = await api("POST", `/api/versions/${before.id}/restore`);
+              await applySaved(back);
+              toast("Photo back");
+            });
+          } catch (err) {
+            toast(err.message);
+          }
+        },
+      }, "Remove photo")
+    : null;
+  return h("div", { className: "photo-col" }, frame, input, remove);
 }
 
 // ---------- Persona ----------

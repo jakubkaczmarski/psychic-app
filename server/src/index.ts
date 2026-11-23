@@ -1,6 +1,8 @@
 import http from "node:http";
 import Anthropic from "@anthropic-ai/sdk";
-import { STAR_SIGNS, getPsychic, personaPrompt, personaStatus, readerPrompt, startPersonaSync } from "./psychics.ts";
+import {
+  STAR_SIGNS, getPsychic, personaPrompt, personaStatus, photoVersions, psychicPhoto, readerPrompt, startPersonaSync,
+} from "./psychics.ts";
 
 // ---- Config (environment variables) ----
 const PORT = Number(process.env.PORT ?? 8787);
@@ -224,6 +226,29 @@ const server = http.createServer(async (req, res) => {
   try {
     if (req.method === "GET" && url.pathname === "/health") {
       return sendJSON(res, 200, { ok: true, model: MODEL, personas: personaStatus() });
+    }
+    // Photo versions, so the app only downloads photos that changed.
+    if (req.method === "GET" && url.pathname === "/v1/psychics") {
+      res.writeHead(200, { "content-type": "application/json", "cache-control": "no-cache" });
+      return res.end(JSON.stringify({ psychics: photoVersions() }));
+    }
+    const photoMatch = url.pathname.match(/^\/v1\/psychics\/([a-z0-9-]{1,32})\/photo$/);
+    if (req.method === "GET" && photoMatch) {
+      const photo = await psychicPhoto(photoMatch[1]).catch((err) => {
+        console.error(err.message);
+        return undefined;
+      });
+      if (photo === undefined) return sendJSON(res, 502, { code: "photo_unavailable", message: "Photo unavailable right now." });
+      if (!photo) return sendJSON(res, 404, { code: "not_found", message: "No photo for this psychic." });
+      res.writeHead(200, {
+        "content-type": photo.mime,
+        "content-length": photo.data.byteLength,
+        etag: `"${photo.version}"`,
+        "x-photo-version": photo.version,
+        // A URL that names the current version never changes, so it can be cached for good.
+        "cache-control": url.searchParams.get("v") === photo.version ? "public, max-age=31536000, immutable" : "no-cache",
+      });
+      return res.end(photo.data);
     }
     if (req.method === "POST" && url.pathname === "/v1/reading") {
       return await handleReading(req, res);

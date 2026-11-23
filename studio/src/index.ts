@@ -24,6 +24,43 @@ if (db.isEmpty()) {
   if (n) console.log(`Imported ${n} psychics from ${seedDir}.`);
 }
 db.ensureHistory();
+importAppPhotos();
+
+/** Gives psychics that never had a photo the one bundled with the iOS app (AsFate/Resources/psychic_<id>.png). */
+function importAppPhotos() {
+  const dir = path.resolve(process.env.STUDIO_PHOTO_DIR ?? path.join(import.meta.dirname, "..", "..", "AsFate", "Resources"));
+  for (const id of db.psychicsNeverPhotographed()) {
+    const file = path.join(dir, `psychic_${id}.png`);
+    if (fs.existsSync(file)) {
+      db.setPhoto(id, "image/png", fs.readFileSync(file));
+      console.log(`Added the app's photo for ${id}.`);
+    }
+  }
+}
+
+const MAX_PHOTO_BYTES = 3_000_000;
+
+/** Works out the image type from its first bytes, so only real images are stored. */
+function imageType(bytes: Uint8Array): string | null {
+  const starts = (...sig: number[]) => sig.every((b, i) => bytes[i] === b);
+  if (starts(0x89, 0x50, 0x4e, 0x47)) return "image/png";
+  if (starts(0xff, 0xd8, 0xff)) return "image/jpeg";
+  if (starts(0x52, 0x49, 0x46, 0x46) && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) return "image/webp";
+  return null;
+}
+
+function sendPhoto(res: http.ServerResponse, photoId: number) {
+  const photo = db.getPhoto(photoId);
+  if (!photo) return fail(res, 404, "No such photo.");
+  res.writeHead(200, {
+    "content-type": photo.mime,
+    "content-length": photo.data.byteLength,
+    // A photo id never changes its image, so browsers can keep it.
+    "cache-control": "private, max-age=31536000, immutable",
+    "x-content-type-options": "nosniff",
+  });
+  res.end(photo.data);
+}
 
 // ---- Limits ----
 const MAX_FIELD = 10_000;
@@ -76,7 +113,7 @@ async function readJSON(req: http.IncomingMessage): Promise<Record<string, unkno
   const chunks: Buffer[] = [];
   for await (const chunk of req) {
     size += (chunk as Buffer).length;
-    if (size > 2_000_000) throw new BadRequest("Request is too large.");
+    if (size > 6_000_000) throw new BadRequest("Request is too large.");
     chunks.push(chunk as Buffer);
   }
   if (!chunks.length) return {};
@@ -182,6 +219,20 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
       db.replaceExamples(id, parseExamples((await readJSON(req)).examples));
       return send(res, 200, { psychic: withStatus(db.getPsychic(id)!) });
     }
+    if (parts[2] === "photo" && method === "PUT") {
+      const { data } = await readJSON(req);
+      if (typeof data !== "string" || !data) throw new BadRequest("Send the photo as base64 in \"data\".");
+      const bytes = Buffer.from(data, "base64");
+      if (bytes.byteLength > MAX_PHOTO_BYTES) throw new BadRequest("Photos are limited to 3 MB.");
+      const mime = imageType(bytes);
+      if (!mime) throw new BadRequest("That file isn't a PNG, JPEG or WebP image.");
+      db.setPhoto(id, mime, bytes);
+      return send(res, 200, { psychic: withStatus(db.getPsychic(id)!) });
+    }
+    if (parts[2] === "photo" && method === "DELETE") {
+      db.removePhoto(id);
+      return send(res, 200, { psychic: withStatus(db.getPsychic(id)!) });
+    }
     if (parts[2] === "history" && method === "GET") {
       return send(res, 200, { history: db.history(id) });
     }
@@ -192,6 +243,9 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
       return send(res, 201, { document: db.getDocument(docId) });
     }
   }
+
+  // /api/photos/:photoId
+  if (parts[0] === "photos" && parts[1] && method === "GET") return sendPhoto(res, Number(parts[1]));
 
   // /api/versions/:id/restore
   if (parts[0] === "versions" && parts[2] === "restore" && method === "POST") {
@@ -229,7 +283,12 @@ const server = http.createServer(async (req, res) => {
   try {
     if (req.method === "GET" && url.pathname === "/health") return send(res, 200, { ok: true });
 
-    // For the reading server.
+    // For the reading server (and, later, the app through it).
+    const photoMatch = url.pathname.match(/^\/v1\/photos\/(\d+)$/);
+    if (req.method === "GET" && photoMatch) {
+      if (!hasReadToken(req)) return fail(res, 401, "Missing or wrong token.");
+      return sendPhoto(res, Number(photoMatch[1]));
+    }
     if (req.method === "GET" && url.pathname === "/v1/personas") {
       if (!hasReadToken(req)) return fail(res, 401, "Missing or wrong token.");
       return send(res, 200, { psychics: db.publishedPersonas() });

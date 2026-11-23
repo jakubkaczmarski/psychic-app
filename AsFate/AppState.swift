@@ -121,9 +121,7 @@ final class AppState: ObservableObject {
 
     /// Called with every StoreKit entitlement check: turns Fate+ on (unlocking waiting replies) or off.
     func setPlusEntitlement(_ active: Bool) {
-        #if DEBUG
-        let active = active || defaults.bool(forKey: "debugPlus")
-        #endif
+        let active = active || defaults.bool(forKey: "testPlus")
         if active, !isPlus {
             unlockPlus()
         } else if !active, isPlus {
@@ -132,16 +130,14 @@ final class AppState: ObservableObject {
         }
     }
 
-    #if DEBUG
-    /// Debug builds without StoreKit products (launched outside Xcode) unlock Fate+ locally,
-    /// so both sides of the paywall can still be tried. Never compiled into release builds.
+    /// Unlocks Fate+ locally, without StoreKit: used while `Store.mockPurchases` is on (TestFlight),
+    /// and in debug builds that have no StoreKit products (launched outside Xcode).
     func unlockPlusForTesting() {
-        defaults.set(true, forKey: "debugPlus")
+        defaults.set(true, forKey: "testPlus")
         unlockPlus()
     }
-    #endif
 
-    /// Unlocks Fate+ and every locked reply. Only called after StoreKit verifies an entitlement.
+    /// Unlocks Fate+ and every locked reply (including the rest of the onboarding reading). Called after StoreKit verifies an entitlement, or by the test unlock.
     private func unlockPlus() {
         isPlus = true
         lockedDay = nil
@@ -169,17 +165,15 @@ final class AppState: ObservableObject {
     /// Shown blurred in place of a locked reply. Says nothing a reading would, in case it's read through the blur.
     static let lockedReplyStandIn = "Your reading is waiting for you. Unlock Fate+ and I'll tell you everything the signs are showing me about this."
 
-    #if DEBUG
-    /// Clears the local debug unlock and the message counts. A real (sandbox or StoreKit-file)
+    /// Clears the local test unlock and the message counts. A real (sandbox or StoreKit-file)
     /// subscription comes back at the next entitlement check; cancel it in the StoreKit transaction manager.
     func resetPlusForTesting() {
-        defaults.removeObject(forKey: "debugPlus")
+        defaults.removeObject(forKey: "testPlus")
         isPlus = false
         freeUsed = 0
         freeDay = nil
         lockedDay = nil
     }
-    #endif
 
     /// Counts a message against today's allowance. Returns whether its reply must be locked.
     /// The unlock bar appears once the locked reply has arrived (see `respond`).
@@ -296,6 +290,7 @@ final class AppState: ObservableObject {
     // MARK: Onboarding
 
     /// Saves the onboarding answers, enters the app and, if given, opens the first reading.
+    /// If the reading was started early (`startTeaser`), that reading is delivered instead of a new one.
     func completeOnboarding(goal: String?, pains: [String], match: Psychic, question: String?, note: String?) {
         defaults.set(goal, forKey: "onboardingGoal")
         defaults.set(pains, forKey: "onboardingPains")
@@ -303,12 +298,103 @@ final class AppState: ObservableObject {
         Analytics.track(.onboardingCompleted, ["goal": goal ?? "none", "psychic": match.id, "painCount": String(pains.count)])
         path = []
         onboarded = true
-        if let question { openChat(match, asking: question, note: note, free: true) }
+        guard let question else { return }
+        if let task = teaserTask {
+            deliverTeaser(task, as: match, question: question, note: note)
+        } else {
+            openChat(match, asking: question, note: note, free: true)
+        }
     }
 
     func replayOnboarding() {
+        teaserTask?.cancel()
+        teaserTask = nil
+        teaser = nil
         path = []
         onboarded = false
+    }
+
+    // MARK: Onboarding teaser
+    // The first reading is fetched while the user looks at their cards. Without Fate+ only the
+    // first `teaserVisible` bubbles are readable; the rest are real text shown blurred, unlocked by Fate+.
+
+    enum Teaser: Equatable { case loading, ready([String]), failed }
+    /// The early first reading, shown on the onboarding result screen.
+    @Published private(set) var teaser: Teaser?
+    private var teaserTask: Task<[String]?, Never>?
+    /// Bubbles of the first reading readable without Fate+.
+    static let teaserVisible = 1
+
+    /// Starts the first reading in the background, so it's ready by the time the cards are on screen.
+    func startTeaser(_ p: Psychic, question: String, note: String) {
+        teaserTask?.cancel()
+        teaser = .loading
+        // The same turns the chat would send: the greeting, then the question with the spread.
+        let turns: [ReadingClient.Turn] = [
+            .init(role: "user", content: "(The user opens a reading with you.)"),
+            .init(role: "assistant", content: greeting(for: p)),
+            .init(role: "user", content: question + "\n\n" + note),
+        ]
+        let name = userName.trimmingCharacters(in: .whitespaces)
+        let sign = sign
+        teaserTask = Task { [weak self] in
+            guard let self else { return nil }
+            let result = await self.fetchReply(p, question: question, ritual: false, history: turns,
+                                               memory: [], name: name, sign: sign)
+            guard !Task.isCancelled else { return nil }
+            if case .success(let text) = result {
+                let parts = Self.teaserParts(from: text)
+                if !parts.isEmpty {
+                    self.teaser = .ready(parts)
+                    return parts
+                }
+            }
+            self.teaser = .failed
+            return nil
+        }
+    }
+
+    /// Chat bubbles for the first reading, with at least one bubble after the readable part,
+    /// so there's always something left to unlock.
+    static func teaserParts(from text: String) -> [String] {
+        let parts = bubbles(from: text)
+        guard parts.count == 1, let only = parts.first else { return parts }
+        // One long bubble: keep its first sentence readable and lock the rest.
+        if let end = only.firstIndex(where: { ".!?".contains($0) }), only.index(after: end) < only.endIndex {
+            let first = String(only[...end]).trimmingCharacters(in: .whitespaces)
+            let rest = String(only[only.index(after: end)...]).trimmingCharacters(in: .whitespaces)
+            if !rest.isEmpty { return [first, rest] }
+        }
+        return parts
+    }
+
+    /// Whether this bubble of the first reading is locked.
+    func teaserLocked(_ index: Int) -> Bool { !isPlus && index >= Self.teaserVisible }
+
+    /// Opens the chat with the reading fetched during onboarding, waiting for it if it isn't in yet.
+    private func deliverTeaser(_ task: Task<[String]?, Never>, as p: Psychic, question: String, note: String?) {
+        teaserTask = nil
+        ensureThread(p)
+        if path.last != .chat(p.id) { path.append(.chat(p.id)) }
+        threads[p.id, default: []].append(ChatMessage(role: .user, text: question, apiNote: note, seen: true))
+        trackMessage(to: p, ritual: false)
+        answeringFor = p.id
+        typingFor = p.id
+        Task {
+            let parts = await task.value
+            teaser = nil
+            guard let parts else {
+                // The early reading failed: ask again, the usual way.
+                typingFor = nil
+                respond(as: p, to: question, ritual: nil, locked: false, usedFree: false)
+                return
+            }
+            for (i, part) in parts.enumerated() {
+                threads[p.id, default: []].append(ChatMessage(role: .psychic, text: part, locked: teaserLocked(i) ? true : nil))
+            }
+            typingFor = nil
+            answeringFor = nil
+        }
     }
 
     /// A gap this long between messages starts a new visit.

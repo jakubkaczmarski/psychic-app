@@ -12,6 +12,11 @@ final class Store: ObservableObject {
     static let weeklyID = "com.jakubkaczmarski.asfate.plus.weekly"
     static let productIDs = [yearlyID, weeklyID]
 
+    /// While true, nothing goes through StoreKit: the paywall's button unlocks Fate+ for free,
+    /// in every build including TestFlight, and nothing is charged. Set to false once the
+    /// products exist in App Store Connect and real purchases should go through.
+    static let mockPurchases = true
+
     @Published private(set) var products: [String: Product] = [:]
     /// The user can still get the yearly plan's free trial (one per Apple ID per subscription group).
     @Published private(set) var trialEligible = true
@@ -26,6 +31,11 @@ final class Store: ObservableObject {
     func start(onChange: @escaping (Bool) -> Void) {
         guard updates == nil else { return }
         self.onChange = onChange
+        if Self.mockPurchases {
+            // AppState keeps the mock unlock itself; report "no real subscription".
+            onChange(false)
+            return
+        }
         // Renewals, refunds, Ask to Buy approvals and purchases made on other devices.
         updates = Task { [weak self] in
             for await result in Transaction.updates {
@@ -40,6 +50,7 @@ final class Store: ObservableObject {
     }
 
     func loadProducts() async {
+        guard !Self.mockPurchases else { return }
         do {
             let list = try await Product.products(for: Self.productIDs)
             products = Dictionary(uniqueKeysWithValues: list.map { ($0.id, $0) })

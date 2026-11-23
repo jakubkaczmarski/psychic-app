@@ -35,10 +35,10 @@ A questionnaire-style first run (`AsFate/Views/Onboarding/`):
 4. First name and star sign
 5. A short "Reading your stars…" moment
 6. **Try it:** tap 3 face-down tarot cards for past, present and future
-7. The spread, a matched psychic (picked from the goal) and a shareable image
+7. The spread, a matched psychic (picked from the goal) and a shareable image. The psychic's reading of the spread starts loading as soon as the cards are drawn (`AppState.startTeaser`): without Fate+ the first message is readable and the rest is shown blurred, and the button reads "Read Selene's full reading". If the reading fails, the card meanings are shown instead
 8. A paywall personalised for each user (closable), with real StoreKit 2 purchases
 
-Finishing opens the matched psychic, who reads the spread live using the goal and pain points as context. Settings has **Replay onboarding**.
+Finishing opens the matched psychic's chat with that same reading (it isn't fetched twice). Without Fate+ the blurred part stays locked there, under **Unlock {psychic}'s reply**; Fate+ reveals it in place. Settings has **Replay onboarding**.
 
 ### Personalised paywall
 The paywall at the end of onboarding is built from the user's own answers instead of a generic feature list:
@@ -70,6 +70,8 @@ Without Fate+ you get **3 free messages a day** (`AppState.freeMessagesPerDay`).
 | `com.jakubkaczmarski.asfate.plus.yearly` | $29.99/year with a 3-day free trial |
 | `com.jakubkaczmarski.asfate.plus.weekly` | $4.99/week |
 
+- **Mock purchases (on for now):** while `Store.mockPurchases` is `true`, nothing goes through StoreKit. In every build, TestFlight included, the paywall button turns Fate+ on for free, and Settings shows **Turn off Fate+ (test build)** instead of Manage subscription. Purchase events are still tracked, with `mock=true`. Set it to `false` once the products exist in App Store Connect.
+
 - **Test purchases:** run the **AsFate** scheme from Xcode. The shared scheme uses `AsFate.storekit`, so purchases, trials, renewals and refunds work locally without App Store Connect and nothing is charged. Use **Debug → StoreKit → Manage Transactions** in Xcode to refund or expire them.
 - **Launched outside Xcode** (for example with `simctl`), StoreKit has no products. The paywall then shows the default prices, and debug builds unlock Fate+ locally when you tap the button (`debugPlus`; cleared by the debug reset). Release builds never do this: they say the purchase isn't available.
 - **Before release:** create a subscription group "Fate+" with both products in App Store Connect, using the same IDs, prices and trial. Then test once with a Sandbox account on a real device.
@@ -81,6 +83,7 @@ Funnel events go to [TelemetryDeck](https://telemetrydeck.com) (`AsFate/Analytic
 | --- | --- | --- |
 | `Onboarding.stepViewed` | Each onboarding screen | `step` (`0_welcome` … `7_paywall`), `goal` |
 | `Onboarding.completed` | Leaving onboarding | `goal`, `psychic`, `painCount` |
+| `Onboarding.teaserShown` | The first reading appeared on the result screen | `psychic`, `parts`, `locked` (bubble counts) |
 | `Paywall.shown` / `planSelected` / `ctaTapped` / `restoreTapped` | Paywall actions | `source`, `psychic`, `goal`, `plan`, `trialEligible` |
 | `Paywall.dismissed` | Close or "Not now" | the above, plus `how` and `seconds` |
 | | `source` is `onboarding`, `lockedReply`, `limitBar`, `freeHint` or `settings` | |

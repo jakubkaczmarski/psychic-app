@@ -4,10 +4,12 @@ import UIKit
 struct AvatarView: View {
     let psychic: Psychic
     var size: CGFloat = 56
+    /// Photos changed in Psychic Studio replace the built-in ones once downloaded.
+    @ObservedObject private var photos = PsychicPhotos.shared
 
     var body: some View {
         Group {
-            if let image = UIImage(named: psychic.imageName) {
+            if let image = photos.image(for: psychic) {
                 Image(uiImage: image).resizable().scaledToFill()
             } else {
                 Theme.surfaceRaised

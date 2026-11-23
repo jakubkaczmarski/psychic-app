@@ -38,6 +38,8 @@ export interface Psychic extends Persona {
 
 /** The shape the reading server expects (matches PsychicPersona in server/src/psychics.ts). */
 export interface PublishedPersona extends Persona {
+  /** Id of the current photo (fetch it from /v1/photos/<id>); null when there's none. Changes when the photo does. */
+  photoId: number | null;
   examples: Example[];
   notes: { title: string; body: string }[];
 }
@@ -276,6 +278,7 @@ export function publish(p: Psychic): PublishedPersona {
   for (const f of LIST_FIELDS) persona[f] = p[f];
   return {
     ...persona,
+    photoId: p.photoId,
     examples: p.examples.filter(isComplete),
     notes: p.documents.filter((d) => d.enabled && d.body.trim()).map((d) => ({ title: d.title || "Background", body: d.body })),
   };

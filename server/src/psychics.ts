@@ -28,6 +28,8 @@ export interface PsychicPersona {
   examples: { user: string; reply: string }[];
   /** Any other documents in the psychic's folder: lore, beliefs, memories, reference material. */
   notes: { title: string; body: string }[];
+  /** Psychic Studio's id for the current photo; changes whenever the photo does. Absent with local files. */
+  photoId?: number | null;
 }
 
 export const PSYCHICS_DIR = path.join(import.meta.dirname, "..", "psychics");
@@ -177,7 +179,9 @@ async function refreshFromStudio(): Promise<void> {
     const body = (await res.json()) as { psychics?: Record<string, unknown> };
     const next: Record<string, PsychicPersona> = {};
     for (const [id, persona] of Object.entries(body.psychics ?? {})) {
-      if (isPersona(persona)) next[id] = { ...persona, notes: persona.notes ?? [] };
+      if (isPersona(persona)) {
+        next[id] = { ...persona, notes: persona.notes ?? [], photoId: typeof persona.photoId === "number" ? persona.photoId : null };
+      }
       else console.warn(`Psychic Studio sent an incomplete persona for "${id}"; skipped.`);
     }
     if (!Object.keys(next).length) throw new Error("no complete psychics");
@@ -196,6 +200,37 @@ async function refreshFromStudio(): Promise<void> {
     }
     lastStudioError = message;
   }
+}
+
+// ---- Photos ----
+// The app asks /v1/psychics for each psychic's photo version, and downloads a photo only when its version
+// changed. Photos come from Psychic Studio; with local files only, there are none and the app keeps its own.
+
+/** Each psychic's current photo version, or null when the app should use its built-in photo. */
+export function photoVersions(): { id: string; photo: string | null }[] {
+  return Object.entries(psychics).map(([id, p]) => ({ id, photo: p.photoId == null ? null : String(p.photoId) }));
+}
+
+const photoCache = new Map<number, { mime: string; data: Buffer }>();
+
+export async function psychicPhoto(id: string): Promise<{ mime: string; data: Buffer; version: string } | null> {
+  const photoId = getPsychic(id)?.photoId;
+  if (photoId == null || !STUDIO_URL) return null;
+  let photo = photoCache.get(photoId);
+  if (!photo) {
+    const res = await fetch(`${STUDIO_URL}/v1/photos/${photoId}`, {
+      headers: { authorization: `Bearer ${STUDIO_TOKEN}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+    const mime = res.headers.get("content-type") ?? "";
+    if (!res.ok || !mime.startsWith("image/")) throw new Error(`Psychic Studio photo ${photoId}: HTTP ${res.status}`);
+    photo = { mime, data: Buffer.from(await res.arrayBuffer()) };
+    // Keep only photos that are still current.
+    const current = new Set(Object.values(psychics).map((p) => p.photoId));
+    for (const key of photoCache.keys()) if (!current.has(key)) photoCache.delete(key);
+    photoCache.set(photoId, photo);
+  }
+  return { ...photo, version: String(photoId) };
 }
 
 /** Fetches personas from Psychic Studio now and then every minute. Does nothing without PERSONA_STUDIO_URL. */

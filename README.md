@@ -161,6 +161,8 @@ Screens say "For entertainment only" without labelling the psychics as AI, for a
 | Endpoint | What it does |
 | --- | --- |
 | `GET /health` | Returns `{ ok: true, model, personas }`, where `personas` says whether they came from the files or Psychic Studio |
+| `GET /v1/psychics` | Returns `{ psychics: [{ id, photo }] }`, where `photo` is the version of the psychic's Psychic Studio photo, or `null` to use the photo built into the app |
+| `GET /v1/psychics/<id>/photo?v=<version>` | The psychic's photo from Psychic Studio. With the current `v`, it can be cached for good |
 | `POST /v1/reading` | Takes `{ psychicId, userName, sign, messages, memory?, mood? }` and streams newline-delimited JSON: `{"type":"text","text":…}` pieces, then `{"type":"done"}` or `{"type":"error","code","message"}` |
 
 - The psychics' instructions are built from `server/psychics/` by `server/src/psychics.ts`. The persona part is prompt-cached, so a long character bible costs little after the first reading. The app sends only the chat, so it can't be used as a free general-purpose Claude proxy.
@@ -217,6 +219,7 @@ To use Psychic Studio, deploy `studio/` as a second service with a persistent vo
 | `AsFate/Rituals.swift` | Each psychic's ritual (moon phase, forecast, tea leaves, crystal ball, playing card) and welcome-back line |
 | `AsFate/Views/Onboarding/` | Onboarding flow, three-card draw, share image and personalised paywall |
 | `AsFate/ReadingClient.swift` | Calls the server and reads the streamed reply |
+| `AsFate/PsychicPhotos.swift` | Psychic photos changed in Psychic Studio. When the app becomes active it asks `/v1/psychics` for photo versions and downloads only photos whose version changed, saving them on the phone (Application Support), so they aren't fetched every launch and work offline. Without one, the built-in photo is used |
 | `AsFate/Views/` | Welcome, Home, Profile, Chat, Readings and Settings screens |
 | `AsFate/Resources/` | Psychic portraits, and planet textures in `Planets/` (CC BY 4.0, Solar System Scope) |
 

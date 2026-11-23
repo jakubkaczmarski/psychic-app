@@ -258,6 +258,13 @@ final class AppState: ObservableObject {
     func checkServer() async {
         guard let client else { serverOnline = nil; return }
         serverOnline = await client.health()
+        if serverOnline == true { await PsychicPhotos.shared.sync(baseURL: client.baseURL) }
+    }
+
+    /// Downloads psychic photos that changed in Psychic Studio. Unchanged ones aren't fetched again.
+    func syncPhotos() {
+        guard let client else { return }
+        Task { await PsychicPhotos.shared.sync(baseURL: client.baseURL) }
     }
 
     // MARK: Readings

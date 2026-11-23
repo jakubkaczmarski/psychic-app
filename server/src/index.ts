@@ -1,6 +1,6 @@
 import http from "node:http";
 import Anthropic from "@anthropic-ai/sdk";
-import { PSYCHICS, STAR_SIGNS, personaPrompt, readerPrompt } from "./psychics.ts";
+import { STAR_SIGNS, getPsychic, personaPrompt, personaStatus, readerPrompt, startPersonaSync } from "./psychics.ts";
 
 // ---- Config (environment variables) ----
 const PORT = Number(process.env.PORT ?? 8787);
@@ -70,7 +70,7 @@ function parseReading(body: unknown): ReadingRequest | string {
   if (!body || typeof body !== "object") return "Body must be a JSON object.";
   const b = body as Record<string, unknown>;
 
-  if (typeof b.psychicId !== "string" || !(b.psychicId in PSYCHICS)) return "Unknown psychic.";
+  if (typeof b.psychicId !== "string" || !getPsychic(b.psychicId)) return "Unknown psychic.";
 
   const userName = typeof b.userName === "string" ? b.userName.trim().slice(0, 40) : "";
   const sign = typeof b.sign === "string" && STAR_SIGNS.has(b.sign) ? b.sign : null;
@@ -157,7 +157,7 @@ async function handleReading(req: http.IncomingMessage, res: http.ServerResponse
     return sendJSON(res, 503, { code: "server_config", message: "Readings are unavailable right now." });
   }
 
-  const persona = PSYCHICS[parsed.psychicId];
+  const persona = getPsychic(parsed.psychicId)!;
   res.writeHead(200, {
     "content-type": "application/x-ndjson; charset=utf-8",
     "cache-control": "no-cache",
@@ -223,7 +223,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://localhost");
   try {
     if (req.method === "GET" && url.pathname === "/health") {
-      return sendJSON(res, 200, { ok: true, model: MODEL });
+      return sendJSON(res, 200, { ok: true, model: MODEL, personas: personaStatus() });
     }
     if (req.method === "POST" && url.pathname === "/v1/reading") {
       return await handleReading(req, res);
@@ -235,5 +235,11 @@ const server = http.createServer(async (req, res) => {
     else res.end();
   }
 });
+
+await startPersonaSync();
+if (!personaStatus().count) {
+  console.error("No psychics available: add persona files or check PERSONA_STUDIO_URL and PERSONA_STUDIO_TOKEN.");
+  process.exit(1);
+}
 
 server.listen(PORT, () => console.log(`Moonlit server listening on :${PORT} (model ${MODEL})`));

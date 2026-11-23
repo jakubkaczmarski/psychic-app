@@ -17,12 +17,14 @@ enum Analytics {
     static let appID = ""
 
     /// Bump this whenever the onboarding or paywall changes, to compare conversion before and after.
-    static let onboardingVersion = "1"
+    static let onboardingVersion = "2"
 
     enum Event: String {
         // Onboarding
         case onboardingStep = "Onboarding.stepViewed"
         case onboardingCompleted = "Onboarding.completed"
+        /// The first reading appeared on the result screen, partly locked; `parts` and `locked` are bubble counts.
+        case teaserShown = "Onboarding.teaserShown"
         // Paywall
         case paywallShown = "Paywall.shown"
         case paywallPlanSelected = "Paywall.planSelected"

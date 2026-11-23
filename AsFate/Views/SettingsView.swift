@@ -89,18 +89,28 @@ struct SettingsView: View {
                 Section {
                     if app.isPlus {
                         Label("Fate+ is on", systemImage: "sparkles")
-                        Button("Manage subscription") { manageSubscription = true }
+                        if Store.mockPurchases {
+                            Button("Turn off Fate+ (test build)") { app.resetPlusForTesting() }
+                        } else {
+                            Button("Manage subscription") { manageSubscription = true }
+                        }
                     } else {
                         Text("\(app.freeMessagesLeft) of \(AppState.freeMessagesPerDay) free messages left today")
                         Button("Get Fate+") { showPaywall = true }
-                        Button(restoring ? "Restoring…" : "Restore purchases") { Task { await restore() } }
-                            .disabled(restoring)
+                        if !Store.mockPurchases {
+                            Button(restoring ? "Restoring…" : "Restore purchases") { Task { await restore() } }
+                                .disabled(restoring)
+                        }
                     }
                     #if DEBUG
                     Button("Debug: reset Fate+ and free messages") { app.resetPlusForTesting() }
                     #endif
                 } header: {
                     Text("Fate+")
+                } footer: {
+                    if Store.mockPurchases {
+                        Text("Test build: Fate+ is free to try and nothing is charged.")
+                    }
                 }
 
                 Section {

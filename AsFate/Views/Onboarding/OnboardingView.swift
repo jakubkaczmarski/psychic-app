@@ -125,6 +125,8 @@ struct OnboardingView: View {
         case .draw:
             DrawStep { cards in
                 spread = cards
+                // Start the psychic's reading now, so it's arriving while the cards are on screen.
+                if let reading = firstReading() { app.startTeaser(match, question: reading.question, note: reading.note) }
                 go(.result)
             }
         case .result:
@@ -184,22 +186,25 @@ struct OnboardingView: View {
 
     /// Leaves onboarding and opens a reading of the spread with the matched psychic.
     private func finish() {
+        let reading = firstReading()
+        app.completeOnboarding(goal: goalID, pains: Array(pains), match: match,
+                               question: reading?.question, note: reading?.note)
+    }
+
+    /// The first question, and the context about the spread sent with it (not shown in the chat).
+    private func firstReading() -> (question: String, note: String)? {
+        guard spread.count == 3 else { return nil }
         let painLabels = OnboardingCatalog.pains.filter { pains.contains($0.id) }.map(\.label)
-        var question: String?
-        var note: String?
-        if spread.count == 3 {
-            let names = spread.map(\.name)
-            question = "I just pulled \(names[0]), \(names[1]) and \(names[2]) for my past, present and future. What do they say about \(goal?.topic ?? "the week ahead")?"
-            var lines = ["[During onboarding the user pulled a three-card spread in the app:"]
-            for (position, card) in zip(OnboardingCatalog.positions, spread) {
-                lines.append("\(position): \(card.label). Traditional meaning: \(card.meaning)")
-            }
-            if let goal { lines.append("What's on their mind: \(goal.label).") }
-            if !painLabels.isEmpty { lines.append("What's making it hard: \(painLabels.joined(separator: "; ")).") }
-            lines.append("Read the spread for them in your own voice, one card at a time, then tie it together.]")
-            note = lines.joined(separator: "\n")
+        let names = spread.map(\.name)
+        let question = "I just pulled \(names[0]), \(names[1]) and \(names[2]) for my past, present and future. What do they say about \(goal?.topic ?? "the week ahead")?"
+        var lines = ["[During onboarding the user pulled a three-card spread in the app:"]
+        for (position, card) in zip(OnboardingCatalog.positions, spread) {
+            lines.append("\(position): \(card.label). Traditional meaning: \(card.meaning)")
         }
-        app.completeOnboarding(goal: goalID, pains: Array(pains), match: match, question: question, note: note)
+        if let goal { lines.append("What's on their mind: \(goal.label).") }
+        if !painLabels.isEmpty { lines.append("What's making it hard: \(painLabels.joined(separator: "; ")).") }
+        lines.append("Read the spread for them in your own voice, one card at a time, then tie it together.]")
+        return (question, lines.joined(separator: "\n"))
     }
 }
 

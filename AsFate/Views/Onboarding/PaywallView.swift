@@ -117,7 +117,7 @@ struct PaywallView: View {
         }
         .task {
             if store.products.isEmpty { await store.loadProducts() }
-            if store.unavailable { Analytics.track(.productsUnavailable, analyticsParams) }
+            if store.unavailable, !Store.mockPurchases { Analytics.track(.productsUnavailable, analyticsParams) }
         }
         .alert("Fate+", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
             Button("OK", role: .cancel) {}
@@ -163,8 +163,15 @@ struct PaywallView: View {
         }
     }
 
+    /// The first reading arrived during onboarding and part of it is locked.
+    private var teaserWaiting: Bool {
+        if case .ready(let parts) = app.teaser { return parts.indices.contains { app.teaserLocked($0) } }
+        return false
+    }
+
     private var headline: String {
         if lockedReply { return "Read \(psychic.short)'s reply" }
+        if teaserWaiting { return name.isEmpty ? "Read all of \(psychic.short)'s reading" : "\(name), read all of \(psychic.short)'s reading" }
         return name.isEmpty ? "Keep \(psychic.short) on call" : "\(name), keep \(psychic.short) on call"
     }
 
@@ -217,7 +224,8 @@ struct PaywallView: View {
                     .frame(maxWidth: .infinity)
                 }
             }
-            Text("Up next: \(psychic.short) reads all three for you.")
+            Text(teaserWaiting ? "\(psychic.short)'s full reading is waiting for you."
+                               : "Up next: \(psychic.short) reads all three for you.")
                 .font(.system(size: 14))
                 .foregroundStyle(Theme.muted)
         }
@@ -303,6 +311,15 @@ struct PaywallView: View {
         var params = analyticsParams
         params["seconds"] = secondsOnPaywall
 
+        if Store.mockPurchases {
+            // Testing (TestFlight): no StoreKit, no charge. Tracked like a real purchase, marked as a mock.
+            params["mock"] = "true"
+            Analytics.track(isTrial ? .trialStarted : .purchased, params)
+            app.unlockPlusForTesting()
+            onFinish()
+            return
+        }
+
         guard let product = selectedProduct else {
             #if DEBUG
             // No StoreKit products here (launched outside Xcode, or not in App Store Connect yet).
@@ -339,6 +356,10 @@ struct PaywallView: View {
 
     private func restore() async {
         Analytics.track(.paywallRestoreTapped, analyticsParams)
+        if Store.mockPurchases {
+            message = "This is a test build: purchases are free and nothing is charged. Tap the button above to turn on Fate+."
+            return
+        }
         busy = true
         defer { busy = false }
         switch await store.restore() {

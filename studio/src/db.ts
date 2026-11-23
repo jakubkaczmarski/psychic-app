@@ -30,6 +30,8 @@ export interface Doc {
 export interface Psychic extends Persona {
   id: string;
   updatedAt: string;
+  /** Changes whenever the photo does; null when there's no photo. */
+  photoId: number | null;
   examples: Example[];
   documents: Doc[];
 }
@@ -86,7 +88,19 @@ db.exec(`
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE INDEX IF NOT EXISTS revisions_psychic ON revisions (psychic_id, id);
+  CREATE TABLE IF NOT EXISTS photos (
+    id INTEGER PRIMARY KEY,
+    psychic_id TEXT NOT NULL REFERENCES psychics(id) ON DELETE CASCADE,
+    mime TEXT NOT NULL,
+    data BLOB NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
 `);
+
+// Older databases: add the photo pointer to psychics.
+if (!(db.prepare("PRAGMA table_info(psychics)").all() as { name: string }[]).some((c) => c.name === "photo_id")) {
+  db.exec("ALTER TABLE psychics ADD COLUMN photo_id INTEGER");
+}
 
 let txDepth = 0;
 
@@ -147,6 +161,7 @@ export function listPsychics() {
       id: String(row.id),
       name: String(row.name),
       specialty: String(row.specialty),
+      photoId: psychic.photoId,
       updatedAt: String(row.updated_at),
       exampleCount: Number(row.example_count),
       documentCount: Number(row.document_count),
@@ -165,7 +180,8 @@ export function getPsychic(id: string): Psychic | null {
   const documents = (
     db.prepare("SELECT * FROM documents WHERE psychic_id = ? ORDER BY title COLLATE NOCASE, id").all(id) as Row[]
   ).map(toDoc);
-  return { id, updatedAt: String(row.updated_at), ...toPersona(row), examples, documents };
+  const photoId = row.photo_id === null || row.photo_id === undefined ? null : Number(row.photo_id);
+  return { id, updatedAt: String(row.updated_at), photoId, ...toPersona(row), examples, documents };
 }
 
 export function createPsychic(id: string, name: string) {
@@ -301,6 +317,7 @@ const GROUP_MINUTES = 10;
 const KEEP_VERSIONS = 150;
 
 interface Snapshot extends Persona {
+  photoId?: number | null;
   examples: Example[];
   documents: { id: number; title: string; body: string; enabled: boolean }[];
 }
@@ -323,6 +340,7 @@ function snapshotOf(id: string): Snapshot | null {
   for (const f of LIST_FIELDS) persona[f] = p[f];
   return {
     ...persona,
+    photoId: p.photoId,
     examples: p.examples,
     documents: p.documents.map((d) => ({ id: d.id, title: d.title, body: d.body, enabled: d.enabled })),
   };
@@ -345,6 +363,47 @@ function record(psychicId: string, kind: string, label: string, group = false) {
   db.prepare("INSERT INTO revisions (psychic_id, kind, label, snapshot) VALUES (?, ?, ?, ?)").run(psychicId, kind, label, json);
   db.prepare(`DELETE FROM revisions WHERE psychic_id = ? AND id NOT IN
               (SELECT id FROM revisions WHERE psychic_id = ? ORDER BY id DESC LIMIT ?)`).run(psychicId, psychicId, KEEP_VERSIONS);
+  // Old photos stay while a kept version still uses them, so going back brings the photo back too.
+  db.prepare(`DELETE FROM photos WHERE psychic_id = ?
+              AND id IS NOT (SELECT photo_id FROM psychics WHERE id = ?)
+              AND id NOT IN (SELECT json_extract(snapshot, '$.photoId') FROM revisions
+                             WHERE psychic_id = ? AND json_extract(snapshot, '$.photoId') IS NOT NULL)`)
+    .run(psychicId, psychicId, psychicId);
+}
+
+// ---- Photos ----
+export function getPhoto(photoId: number): { mime: string; data: Uint8Array; psychicId: string } | null {
+  const row = db.prepare("SELECT psychic_id, mime, data FROM photos WHERE id = ?").get(photoId) as Row | undefined;
+  return row ? { mime: String(row.mime), data: row.data as Uint8Array, psychicId: String(row.psychic_id) } : null;
+}
+
+function setPhotoPointer(psychicId: string, photoId: number | null) {
+  db.prepare("UPDATE psychics SET photo_id = ?, updated_at = datetime('now') WHERE id = ?").run(photoId, psychicId);
+}
+
+/** Replaces a psychic's photo. The previous one is kept while history still refers to it. */
+export function setPhoto(psychicId: string, mime: string, data: Uint8Array) {
+  tx(() => {
+    const had = getPsychic(psychicId)?.photoId != null;
+    const result = db.prepare("INSERT INTO photos (psychic_id, mime, data) VALUES (?, ?, ?)").run(psychicId, mime, data);
+    setPhotoPointer(psychicId, Number(result.lastInsertRowid));
+    record(psychicId, "photo", had ? "Changed the photo" : "Added a photo");
+  });
+}
+
+/** Psychics with no photo now and none ever (removing a photo on purpose keeps it removed). */
+export function psychicsNeverPhotographed(): string[] {
+  return (db.prepare(`SELECT id FROM psychics WHERE photo_id IS NULL
+    AND NOT EXISTS (SELECT 1 FROM photos WHERE photos.psychic_id = psychics.id)
+    AND NOT EXISTS (SELECT 1 FROM revisions r WHERE r.psychic_id = psychics.id AND r.kind = 'photo')`).all() as Row[])
+    .map((r) => String(r.id));
+}
+
+export function removePhoto(psychicId: string) {
+  tx(() => {
+    setPhotoPointer(psychicId, null);
+    record(psychicId, "photo", "Removed the photo");
+  });
 }
 
 /** Gives psychics that predate history a starting version, so their first edit can be undone. */
@@ -373,6 +432,9 @@ function describeChanges(before: Snapshot | null, after: Snapshot): string[] {
     changes.push(exAfter > exBefore ? `Added ${exAfter - exBefore} example${exAfter - exBefore === 1 ? "" : "s"}`
       : exAfter < exBefore ? `Removed ${exBefore - exAfter} example${exBefore - exAfter === 1 ? "" : "s"}`
       : "Changed examples");
+  }
+  if ((before.photoId ?? null) !== (after.photoId ?? null)) {
+    changes.push(after.photoId == null ? "Removed the photo" : before.photoId == null ? "Added a photo" : "Changed the photo");
   }
   const docName = (d: { title: string }) => `“${d.title || "Untitled"}”`;
   const oldDocs = new Map(before.documents.map((d) => [d.id, d]));
@@ -419,6 +481,7 @@ export function restore(revisionId: number): string | null {
   tx(() => {
     quietly(() => {
       updatePersona(id, snap);
+      if (snap.photoId !== undefined) setPhotoPointer(id, snap.photoId);
       replaceExamples(id, snap.examples);
       db.prepare("DELETE FROM documents WHERE psychic_id = ?").run(id);
       // Keep each document's id when it's free, so history can tell a restored document from a new one.

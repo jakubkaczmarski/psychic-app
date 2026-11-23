@@ -108,7 +108,7 @@ textarea.tall { min-height: 420px; }
 .psychic-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
 .psychic-list a {
   display: grid;
-  grid-template-columns: 10px 1fr;
+  grid-template-columns: 30px 1fr;
   column-gap: 10px;
   align-items: baseline;
   padding: 8px;
@@ -157,6 +157,34 @@ textarea.tall { min-height: 420px; }
 .save-state[data-kind="saving"], .save-state[data-kind="waiting"] { color: var(--ink-soft); }
 .save-state[data-kind="saved"]::before { content: "✓ "; color: var(--live); }
 .save-state[data-kind="error"] { color: var(--seal); white-space: normal; }
+
+/* Photos */
+.identity { display: flex; gap: 22px; align-items: center; }
+.photo-col { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: none; }
+.photo { position: relative; padding: 0; border-radius: 50%; border: 0; }
+.photo .photo-label {
+  position: absolute;
+  inset: auto 0 0 0;
+  padding: 6px 0 10px;
+  border-radius: 0 0 999px 999px;
+  background: rgba(46, 33, 23, .62);
+  color: var(--page);
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0;
+  transition: opacity .15s;
+}
+.photo:hover .photo-label, .photo:focus-visible .photo-label, .photo.over .photo-label { opacity: 1; }
+.photo .avatar.empty + .photo-label { opacity: 1; background: none; color: var(--seal); position: static; padding: 0; }
+.photo.over .avatar { outline: 3px solid var(--focus); outline-offset: 2px; }
+.avatar { display: inline-grid; place-items: center; border-radius: 50%; object-fit: cover; background: var(--parchment); color: var(--ink-soft); font-family: var(--serif); font-weight: 600; flex: none; }
+.avatar.large { width: 112px; height: 112px; font-size: 44px; border: 1px solid var(--line); }
+.avatar.small { width: 30px; height: 30px; font-size: 14px; border: 1px solid var(--line); }
+.avatar.empty.large { border: 1.5px dashed var(--line-strong); background: var(--paper); }
+.remove-photo { font-size: 12px; }
+.avatar-wrap { position: relative; display: inline-flex; grid-row: span 2; align-self: center; }
+.avatar-wrap .dot { position: absolute; right: -1px; bottom: -1px; width: 10px; height: 10px; border: 2px solid var(--parchment); }
+.avatar-wrap .dot.draft { background: var(--parchment); border: 2px solid var(--seal); }
 
 /* The to-do list shown until a psychic is complete */
 .todo {
@@ -323,10 +351,16 @@ dialog h2 { font-size: 24px; }
   .psychic-list a { display: flex; gap: 6px; align-items: center; padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; white-space: nowrap; background: var(--page); }
   .psychic-list .meta { display: none; }
   .psychic-list .name { font-size: 15px; }
+  .psychic-list a { padding-left: 6px; }
+  .avatar.small { width: 24px; height: 24px; font-size: 12px; }
+  .avatar.large { width: 84px; height: 84px; font-size: 34px; }
+  .identity { gap: 14px; }
   .editor { padding-top: 24px; }
   .save-state { display: none; }
   .save-state[data-kind="error"] { display: block; }
   .tabbar { flex-wrap: wrap; }
+  .tabs { overflow-x: auto; }
+  .tabs a { padding: 10px 10px; white-space: nowrap; }
 }
 
 @media (prefers-reduced-motion: reduce) {

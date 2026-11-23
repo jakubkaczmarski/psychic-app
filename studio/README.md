@@ -38,6 +38,9 @@ what's still missing, and each item jumps to its field.
 - **Examples**: short exchanges that show how the psychic texts. Blank lines in a reply become separate bubbles.
 - **Documents**: background notes such as history, beliefs, people in their life or how they read particular cards.
   Write them, upload `.md` / `.txt` files, or drop files onto the page. Each one can be switched off without deleting it.
+- **Photo**: click the round photo next to the name, or drop an image onto it. Photos are cropped to a square
+  and shrunk to at most 800 px. On first start, psychics get the photo bundled with the iOS app
+  (`AsFate/Resources/psychic_<id>.png`, set by `STUDIO_PHOTO_DIR`). Photo changes are part of the history.
 - **History**: every version of the psychic, newest first, with what changed in each. Edits made within
   10 minutes of each other are grouped into one version, and the last 150 versions are kept. "Go back to this"
   restores an earlier version; the restore is itself a new version, so it can be undone. Deleting a psychic
@@ -62,6 +65,7 @@ is cached, so tens of pages per psychic stays cheap.
 | Endpoint | Who uses it |
 | --- | --- |
 | `GET /v1/personas` | The reading server, with `Authorization: Bearer <STUDIO_READ_TOKEN>`. Returns every live psychic. |
+| `GET /v1/photos/<id>` | Same token. A psychic's photo, for when the app starts loading photos through the reading server. |
 | `/api/...` | The web interface, after signing in |
 | `GET /health` | Uptime checks |
 

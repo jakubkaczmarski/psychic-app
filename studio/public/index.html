@@ -33,11 +33,14 @@
     <form id="new-form" method="dialog">
       <h2>New psychic</h2>
       <label for="new-name">Name</label>
-      <input id="new-name" required maxlength="200" placeholder="Auntie Luna">
-      <label for="new-id">Id</label>
-      <input id="new-id" required maxlength="32" pattern="[a-z0-9][a-z0-9\-]*" placeholder="luna">
-      <p class="hint">Lowercase letters, numbers and dashes. The app uses it to pick this psychic, and it can't be changed later.</p>
-      <p class="hint">Readings can use a new psychic once its persona and examples are filled in, but the iOS app also needs an update before users can choose it.</p>
+      <input id="new-name" required maxlength="200" placeholder="Auntie Luna" autocomplete="off">
+      <p class="hint row"><span id="new-id-preview"></span> <button id="new-id-edit" class="link" type="button">Change id</button></p>
+      <div id="new-id-field" hidden>
+        <label for="new-id">Id</label>
+        <input id="new-id" maxlength="32" placeholder="luna" autocomplete="off">
+        <p class="hint">Lowercase letters, numbers and dashes. The app uses it to pick this psychic, and it can't be changed later.</p>
+      </div>
+      <p class="hint">You'll fill in their character next. Note: the iOS app needs an update before users can choose a new psychic.</p>
       <p id="new-error" class="error" role="alert"></p>
       <div class="row end">
         <button type="button" class="ghost" id="new-cancel">Cancel</button>

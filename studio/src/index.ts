@@ -65,11 +65,8 @@ function parseExamples(value: unknown): db.Example[] {
       const o = (e ?? {}) as Record<string, unknown>;
       return { user: text(o.user ?? "", "Example message", 2000).replace(/\n+/g, " "), reply: text(o.reply ?? "", "Example reply", 4000) };
     })
-    .filter((e) => e.user || e.reply)
-    .map((e) => {
-      if (!e.user || !e.reply) throw new BadRequest("Each example needs both a message and a reply.");
-      return e;
-    });
+    // Half-written examples are kept so autosave doesn't lose them; only complete ones are published.
+    .filter((e) => e.user || e.reply);
 }
 
 // ---- HTTP helpers ----
@@ -186,7 +183,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     }
     if (parts[2] === "documents" && method === "POST") {
       const body = await readJSON(req);
-      const title = text(body.title ?? "", "Title", MAX_TITLE) || "Untitled";
+      const title = text(body.title ?? "", "Title", MAX_TITLE);
       const docId = db.createDocument(id, title, text(body.body ?? "", "Document", MAX_DOC));
       return send(res, 201, { document: db.getDocument(docId) });
     }
@@ -200,7 +197,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
       const body = await readJSON(req);
       db.updateDocument(
         doc.id,
-        text(body.title ?? doc.title, "Title", MAX_TITLE) || "Untitled",
+        text(body.title ?? doc.title, "Title", MAX_TITLE),
         text(body.body ?? doc.body, "Document", MAX_DOC),
         typeof body.enabled === "boolean" ? body.enabled : doc.enabled,
       );

@@ -29,11 +29,15 @@ PERSONA_STUDIO_TOKEN=<the studio's STUDIO_READ_TOKEN>
 
 ## What editors can do
 
+Everything saves automatically a moment after you stop typing. The indicator next to the tabs shows
+"Saving…", "All changes saved", or what went wrong. Until a psychic is complete, a to-do list at the top shows
+what's still missing, and each item jumps to its field.
+
 - **Persona**: name, specialty, backstory, voice, texting style, catchphrases, things they never do, quirks,
   opinions of the others, and how they read their ritual.
 - **Examples**: short exchanges that show how the psychic texts. Blank lines in a reply become separate bubbles.
 - **Documents**: background notes such as history, beliefs, people in their life or how they read particular cards.
-  Write them, or upload `.md` / `.txt` files. Each one can be switched off without deleting it.
+  Write them, upload `.md` / `.txt` files, or drop files onto the page. Each one can be switched off without deleting it.
 - **New psychic**: readings can use it once the persona and at least one example are filled in. The iOS
   app also needs an update before users can pick it, because the app's list of psychics is built in.
 
@@ -69,7 +73,7 @@ holds the psychics' instructions, so don't leave it open without the password.
 
 ## Not built yet
 
-- Edit history and undo. Today, a save overwrites the previous version.
+- Edit history. Every change saves straight away and overwrites the previous version (removed examples can be undone for a few seconds).
 - Several editor accounts. There is one shared password.
 - Trying a reading from the studio before an edit goes live.
 - PDF and Word uploads (only `.md` and `.txt` for now).

@@ -218,12 +218,14 @@ export function deleteDocument(docId: number) {
   });
 }
 
+const isComplete = (e: Example) => Boolean(e.user.trim() && e.reply.trim());
+
 /** Required parts that are still empty. A psychic is only published once this is empty. */
 export function missingParts(p: Psychic): string[] {
   const missing: string[] = [];
   for (const f of PERSONA_FIELDS) if (!p[f].trim()) missing.push(f);
   for (const f of LIST_FIELDS) if (!p[f].length) missing.push(f);
-  if (!p.examples.length) missing.push("examples");
+  if (!p.examples.some(isComplete)) missing.push("examples");
   return missing;
 }
 
@@ -233,8 +235,8 @@ export function publish(p: Psychic): PublishedPersona {
   for (const f of LIST_FIELDS) persona[f] = p[f];
   return {
     ...persona,
-    examples: p.examples,
-    notes: p.documents.filter((d) => d.enabled && d.body.trim()).map((d) => ({ title: d.title, body: d.body })),
+    examples: p.examples.filter(isComplete),
+    notes: p.documents.filter((d) => d.enabled && d.body.trim()).map((d) => ({ title: d.title || "Background", body: d.body })),
   };
 }
 

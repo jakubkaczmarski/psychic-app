@@ -30,6 +30,7 @@ struct SpreadView: View {
                      : "\(spread.positions.count - spread.cards.count) still face down.")
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.faint)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(14)

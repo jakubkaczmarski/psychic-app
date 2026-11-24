@@ -141,8 +141,10 @@ struct ChatView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     let style = Rituals.style(for: psychic.id)
-                    if app.spreadOnTable(for: psychic) != nil {
-                        // A spread is waiting: turning the next card comes first.
+                    let onTable = app.spreadOnTable(for: psychic) != nil
+                    if onTable {
+                        // A spread is waiting: turning the next card is the only card action, so a
+                        // ritual or a new spread can't wipe out the cards still face down.
                         Button { app.turnNextCard(with: psychic) } label: {
                             Label("Turn the next card", systemImage: "rectangle.portrait.on.rectangle.portrait.angled")
                                 .font(.system(size: 14, weight: .semibold))
@@ -153,19 +155,20 @@ struct ChatView: View {
                         }
                         .disabled(busy)
                         .opacity(busy ? 0.5 : 1)
+                    } else {
+                        Button { app.performRitual(with: psychic) } label: {
+                            Label(style.button, systemImage: style.buttonSymbol)
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(Theme.onGold)
+                                .padding(.horizontal, 16)
+                                .frame(minHeight: 40)
+                                .background(Theme.gold, in: Theme.chip)
+                        }
+                        .disabled(busy)
+                        .opacity(busy ? 0.5 : 1)
                     }
-                    Button { app.performRitual(with: psychic) } label: {
-                        Label(style.button, systemImage: style.buttonSymbol)
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(Theme.onGold)
-                            .padding(.horizontal, 16)
-                            .frame(minHeight: 40)
-                            .background(Theme.gold, in: Theme.chip)
-                    }
-                    .disabled(busy)
-                    .opacity(busy ? 0.5 : 1)
 
-                    if app.isLive {
+                    if app.isLive, !onTable {
                         Menu {
                             ForEach(SpreadKind.allCases) { kind in
                                 Button {

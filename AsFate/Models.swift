@@ -10,8 +10,71 @@ struct TarotCard: Codable, Hashable {
     var label: String { numeral.isEmpty ? name : "\(name) (\(numeral))" }
 }
 
+/// A card the server drew and has turned face up.
+struct DrawnCard: Codable, Hashable {
+    /// Where it sits in the spread, e.g. "What's in the way".
+    let position: String
+    let name: String
+    /// Roman numeral of a major arcana card; empty otherwise.
+    let numeral: String
+    /// Cups, Wands, Swords, Pentacles or "Major"; Hearts, Diamonds, Clubs or Spades.
+    let suit: String
+    let rank: String
+    let reversed: Bool
+    /// Traditional meaning, the reversed one when it's reversed.
+    let meaning: String
+
+    var tarotCard: TarotCard { TarotCard(numeral: numeral, name: name, meaning: meaning) }
+}
+
+/// The spreads the server can lay out.
+enum SpreadKind: String, Codable, CaseIterable, Identifiable {
+    case single, three, cross
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .single: "One card"
+        case .three: "Three cards"
+        case .cross: "The cross · 5 cards"
+        }
+    }
+    /// What the user "says" when they pick it.
+    var request: String {
+        switch self {
+        case .single: "Draw one card for me."
+        case .three: "Lay out three cards for me."
+        case .cross: "Lay out the cross for me."
+        }
+    }
+    var count: Int { self == .single ? 1 : self == .three ? 3 : 5 }
+    /// Only with Fate+.
+    var needsPlus: Bool { self == .cross }
+}
+
+/// A spread on the table, as of one turn: the cards turned so far, and the token to turn the next one.
+/// The server keeps the face-down cards inside the token; the app can't see them.
+struct CardSpread: Codable, Hashable {
+    let token: String
+    /// "tarot" or "playing".
+    let deck: String
+    let kind: String
+    let name: String
+    let positions: [String]
+    let cards: [DrawnCard]
+
+    var isComplete: Bool { cards.count >= positions.count }
+    var isPlaying: Bool { deck == "playing" }
+}
+
+/// What to ask the server to draw with a question: a new spread, or the next card of one on the table.
+struct DrawRequest: Codable, Hashable {
+    var spread: String? = nil
+    var token: String? = nil
+    var turn: Int? = nil
+}
+
 struct ChatMessage: Identifiable, Codable, Equatable {
-    enum Role: String, Codable { case user, psychic, card, ritual }
+    enum Role: String, Codable { case user, psychic, card, ritual, spread }
 
     var id = UUID()
     var role: Role
@@ -22,6 +85,10 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     var isError = false
     /// Result of a psychic's ritual (role `.ritual`).
     var ritual: Ritual? = nil
+    /// Cards on the table after this turn (role `.spread`).
+    var spread: CardSpread? = nil
+    /// Cards to draw with this question (user messages). Kept so a locked reply can draw them once unlocked.
+    var draw: DrawRequest? = nil
     /// When the message was added. Missing on messages saved by older versions.
     var date: Date? = Date()
     /// Marks the first message of a new visit; earlier visits are sent as memory.
@@ -36,24 +103,41 @@ struct ChatMessage: Identifiable, Codable, Equatable {
 
 struct Psychic: Identifiable, Hashable {
     let id: String
-    let name: String
-    let short: String
+    var name: String
+    var short: String
     let imageName: String
-    let ringHex: UInt32
-    let specialty: String
-    let tagline: String
-    let bio: String
+    var ringHex: UInt32
+    var specialty: String
+    var tagline: String
+    var bio: String
     let persona: String
-    let styles: [String]
-    let asks: [String]
-    let defaultName: String
-    let greeting: String
-    let signLine: String
-    let cardIntro: String
+    var styles: [String]
+    var asks: [String]
+    var defaultName: String
+    var greeting: String
+    var signLine: String
+    var cardIntro: String
     // Demo-mode replies, used only when no API key is set.
     let love: [String]
     let work: [String]
     let general: [String]
+
+    // Set in Psychic Studio (see `PsychicDirectory`); nil or empty means the app's own default.
+    /// Quote on the profile page ("A taste of a reading").
+    var sample: String? = nil
+    var moods: [String] = []
+    var morningOpenings: [String] = []
+    var ritualButton: String? = nil
+    var ritualIntro: String? = nil
+    var spreadIntro: String? = nil
+    var welcomeBack: String? = nil
+    /// "slow", "medium" or "fast".
+    var typing: String? = nil
+    /// Built into the app, with its own ritual. Psychics added in Psychic Studio draw cards instead.
+    var isBuiltIn = true
+
+    /// The quote on the profile page.
+    var sampleReading: String { sample ?? general.first ?? tagline }
 }
 
 struct StarSign: Identifiable, Hashable {
@@ -161,7 +245,11 @@ enum Catalog {
         .init(numeral: "", name: "King of Pentacles", meaning: "Security earned and shared. Be generous with what you have built."),
     ]
 
-    static let psychics: [Psychic] = [
+    /// Every psychic to show: the built-in ones (with any text changed in Psychic Studio), then the ones
+    /// added in Psychic Studio. See `PsychicDirectory`.
+    static var psychics: [Psychic] { PsychicDirectory.psychics(builtIn: builtIn) }
+
+    static let builtIn: [Psychic] = [
         Psychic(
             id: "selene", name: "Madame Selene", short: "Selene", imageName: "psychic_selene", ringHex: 0x6A58B4,
             specialty: "Love & relationships", tagline: "Reads the moon, and your texts.",
@@ -239,7 +327,8 @@ enum Catalog {
         ),
     ]
 
+    /// The psychic with this id. One hidden in Psychic Studio since is still found, so old chats keep working.
     static func psychic(_ id: String) -> Psychic {
-        psychics.first { $0.id == id } ?? psychics[0]
+        psychics.first { $0.id == id } ?? PsychicDirectory.anyPsychic(id) ?? builtIn[0]
     }
 }

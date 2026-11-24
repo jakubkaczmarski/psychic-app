@@ -120,7 +120,8 @@ struct ChatView: View {
 
     /// "1 free message left today", shown when it's about to run out.
     @ViewBuilder private var freeHint: some View {
-        if !app.isPlus, app.freeMessagesLeft <= 1 {
+        // While cards are face down the next reply turns one, which is free, so there's nothing to warn about.
+        if !app.isPlus, app.freeMessagesLeft <= 1, app.spreadOnTable(for: psychic) == nil {
             Button { paywall = SheetSource(id: "freeHint") } label: {
                 Text(app.freeMessagesLeft == 1
                      ? "1 free message left today · **Go unlimited**"
@@ -140,6 +141,19 @@ struct ChatView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     let style = Rituals.style(for: psychic.id)
+                    if app.spreadOnTable(for: psychic) != nil {
+                        // A spread is waiting: turning the next card comes first.
+                        Button { app.turnNextCard(with: psychic) } label: {
+                            Label("Turn the next card", systemImage: "rectangle.portrait.on.rectangle.portrait.angled")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(Theme.onGold)
+                                .padding(.horizontal, 16)
+                                .frame(minHeight: 40)
+                                .background(Theme.gold, in: Theme.chip)
+                        }
+                        .disabled(busy)
+                        .opacity(busy ? 0.5 : 1)
+                    }
                     Button { app.performRitual(with: psychic) } label: {
                         Label(style.button, systemImage: style.buttonSymbol)
                             .font(.system(size: 14, weight: .semibold))
@@ -150,6 +164,30 @@ struct ChatView: View {
                     }
                     .disabled(busy)
                     .opacity(busy ? 0.5 : 1)
+
+                    if app.isLive {
+                        Menu {
+                            ForEach(SpreadKind.allCases) { kind in
+                                Button {
+                                    if kind.needsPlus, !app.isPlus { paywall = SheetSource(id: "spread") }
+                                    else { app.drawSpread(kind, with: psychic) }
+                                } label: {
+                                    Label(kind.needsPlus && !app.isPlus ? "\(kind.title) · Fate+" : kind.title,
+                                          systemImage: kind.needsPlus && !app.isPlus ? "lock.fill" : "rectangle.portrait")
+                                }
+                            }
+                        } label: {
+                            Label("Lay out cards", systemImage: "square.stack")
+                                .font(.system(size: 14))
+                                .foregroundStyle(Theme.text)
+                                .padding(.horizontal, 16)
+                                .frame(minHeight: 40)
+                                .background(Theme.surface, in: Theme.chip)
+                                .overlay(Theme.chip.stroke(Theme.borderStrong, lineWidth: 1))
+                        }
+                        .disabled(busy)
+                        .opacity(busy ? 0.5 : 1)
+                    }
 
                     ForEach(psychic.asks, id: \.self) { chip in
                         Button(chip) { app.send(chip, to: psychic) }
@@ -334,6 +372,15 @@ struct MessageRow: View {
                     .frame(width: 260, alignment: .leading)
                     .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.radius))
                     .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(Theme.gold, lineWidth: 1))
+                    Spacer(minLength: 0)
+                }
+                .transition(.scale(scale: 0.9).combined(with: .opacity))
+            }
+        case .spread:
+            if let spread = message.spread {
+                HStack(alignment: .bottom, spacing: 8) {
+                    AvatarView(psychic: psychic, size: 30)
+                    SpreadView(spread: spread)
                     Spacer(minLength: 0)
                 }
                 .transition(.scale(scale: 0.9).combined(with: .opacity))

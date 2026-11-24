@@ -68,6 +68,14 @@ const state = {
   tab: "persona",
   examples: [],
   openDocId: null,
+  /** Cards in each deck, from the server: { tarot: { name, reversals, groups: [{ name, cards }] }, playing: … } */
+  decks: null,
+  /** Card whose meaning is open in the Deck tab. */
+  openCard: null,
+  /** Deck tab shows only cards with their own meaning. */
+  onlyOwn: false,
+  /** The studio can write with Claude (it has an API key). */
+  claude: false,
 };
 
 const FIELDS = [
@@ -81,6 +89,9 @@ const FIELDS = [
   { key: "quirks", label: "Quirks", hint: "Habits that show up in readings.", placeholder: "e.g. Mentions the moon whenever she can." },
   { key: "others", label: "The other psychics", hint: "What they think of the rest of the cast.", placeholder: "e.g. Finds Kaz terribly loud but annoyingly right." },
   { key: "ritual", label: "Ritual", hint: "How they read the result of their ritual button in the app.", placeholder: "e.g. Names tonight's moon phase and lets it set the mood." },
+  { key: "howIRead", label: "How I read cards", optional: true,
+    hint: "Optional. Their method with a spread: do they ask a question before drawing, how much they hedge, do they name the card or hint at it first, how they handle a hard card like the Tower while staying kind.",
+    placeholder: "e.g. Hints at the picture before naming the card. Asks how it feels before turning the next one. The Tower is weather, never fate." },
 ];
 
 // Where each missing part gets filled in, for the to-do list.
@@ -206,11 +217,20 @@ window.addEventListener("hashchange", async () => {
 async function route() {
   currentHash = location.hash;
   const [, id, tab, focus] = location.hash.split("/");
+  if (id === "new") {
+    // The first step of the guided setup, before the psychic exists.
+    state.psychic = null;
+    state.tab = "create";
+    state.wizardStep = "idea";
+    renderSidebar();
+    return renderWizard();
+  }
   if (!id) {
     if (state.list.length) return go(state.list[0].id);
     return renderEmpty();
   }
-  state.tab = ["persona", "examples", "documents", "history"].includes(tab) ? tab : "persona";
+  state.tab = ["persona", "app", "examples", "deck", "documents", "history", "create"].includes(tab) ? tab : "persona";
+  if (state.tab === "create") state.wizardStep = WIZARD.some((w) => w.key === focus) ? focus : "sources";
   if (!state.psychic || state.psychic.id !== id) {
     try {
       state.psychic = (await api("GET", `/api/psychics/${encodeURIComponent(id)}`)).psychic;
@@ -219,12 +239,13 @@ async function route() {
       throw err;
     }
     state.openDocId = null;
+    state.openCard = null;
   }
   state.examples = state.psychic.examples.map((e) => ({ ...e }));
   if (!state.examples.length) state.examples.push({ user: "", reply: "" });
   renderSidebar();
   renderEditor();
-  if (focus) document.getElementById(decodeURIComponent(focus))?.focus();
+  if (focus && state.tab !== "create") document.getElementById(decodeURIComponent(focus))?.focus();
 }
 
 // ---------- Sidebar ----------
@@ -243,7 +264,8 @@ function renderSidebar() {
             avatar(p, "small"),
             h("span", { className: p.missing.length ? "dot draft" : "dot", title: p.missing.length ? "Not live yet" : "Live in readings" })),
           h("span", { className: "name" }, p.name || p.id),
-          h("span", { className: "meta" }, p.missing.length ? "Not live yet" : p.specialty),
+          h("span", { className: "meta" },
+            p.missing.length ? "Not live yet" : !p.builtIn && !p.inApp ? "Live, not in the app yet" : p.specialty),
         ),
       ),
     ),
@@ -258,7 +280,7 @@ function renderEmpty() {
     h("div", { className: "editor-inner" },
       h("div", { className: "character" }, h("h1", {}, "No psychics yet")),
       h("p", { className: "empty" }, "Create the first psychic to start writing their character."),
-      h("button", { className: "primary", onclick: openNewDialog }, "New psychic"),
+      h("button", { className: "primary", onclick: () => (location.hash = "#/new") }, "Make your first psychic"),
     ),
   );
 }
@@ -269,6 +291,7 @@ function approxTokens(p) {
 }
 
 function renderEditor() {
+  if (state.tab === "create") return renderWizard();
   $("editor").replaceChildren(
     h("div", { className: "editor-inner" },
       h("header", { id: "character", className: "character" }),
@@ -278,6 +301,8 @@ function renderEditor() {
       ),
       h("div", { id: "tab-body" },
         state.tab === "examples" ? examplesView()
+          : state.tab === "app" ? appView()
+          : state.tab === "deck" ? deckView()
           : state.tab === "documents" ? documentsView()
           : state.tab === "history" ? historyView()
           : personaView()),
@@ -293,7 +318,10 @@ function renderHeader() {
   const el = $("character");
   if (!el) return;
   const live = !p.missing.length;
+  const unfinished = p.missing.length || (!p.builtIn && !p.inApp);
   el.replaceChildren(...[
+    claudeButton(),
+    unfinished ? h("a", { className: "setup-link", href: `#/${p.id}/create/${p.missing.length ? "sources" : "live"}` }, "Continue guided setup →") : null,
     h("div", { className: "identity" },
       photoPicker(p),
       h("div", {},
@@ -344,14 +372,16 @@ function renderTabs() {
       label, count !== undefined ? h("span", { className: "count" }, count) : null);
   el.replaceChildren(
     tab("persona", "Persona"),
+    tab("app", "In the app"),
     tab("examples", "Examples", complete),
+    tab("deck", "Deck", p.cardMeanings.length),
     tab("documents", "Documents", p.documents.filter((d) => d.enabled).length),
     tab("history", "History"),
   );
 }
 
 // ---------- Photos ----------
-const initials = (name) => (name || "?").replace(/^(madame|grandma|oracle|auntie|the)\s+/i, "").trim().slice(0, 1).toUpperCase();
+const initials = (name) => (name || "?").replace(/^(madame|grandma|grandpa|oracle|auntie|aunt|uncle|the)\s+/i, "").trim().slice(0, 1).toUpperCase();
 
 function avatar(p, size) {
   return p.photoId
@@ -439,7 +469,7 @@ function personaView() {
   for (const f of FIELDS) {
     const id = `f-${f.key}`;
     const value = f.list ? p[f.key].join("\n") : p[f.key];
-    const field = h("div", { className: "field" }, h("label", { for: id }, f.label));
+    const field = h("div", { className: "field" }, h("label", { for: id }, f.label, f.optional ? h("span", { className: "optional" }, " optional") : null));
     if (f.hint) field.append(h("p", { className: "hint" }, f.hint));
     field.append(
       f.input
@@ -556,6 +586,295 @@ function examplesView() {
       },
     }, "+ Add another example"),
   );
+}
+
+// ---------- Deck ----------
+async function loadDecks() {
+  if (!state.decks) state.decks = (await api("GET", "/api/decks")).decks;
+  return state.decks;
+}
+
+function deckView() {
+  const p = state.psychic;
+  const wrap = h("div", {}, h("p", { className: "empty" }, "Loading…"));
+  loadDecks().then(() => drawDeck(wrap)).catch((err) => wrap.replaceChildren(h("p", { className: "empty" }, err.message)));
+  return wrap;
+}
+
+function drawDeck(wrap) {
+  const p = state.psychic;
+  const deck = state.decks[p.deck] ?? state.decks.tarot;
+  // Edits go into this copy, keyed by card name, and are saved as a whole.
+  const meanings = new Map(p.cardMeanings.map((m) => [m.card, { ...m }]));
+  const hasOwn = (m) => m && (m.upright.trim() || m.reversed.trim() || m.memory.trim());
+
+  const save = async () => {
+    const cardMeanings = [...meanings.values()].filter(hasOwn);
+    const { psychic } = await api("PUT", `/api/psychics/${p.id}/deck`, { deck: p.deck, cardMeanings });
+    // Keep the open editor; only refresh counts and the header.
+    state.psychic = { ...psychic };
+    renderHeader();
+    renderTabs();
+    await refreshList();
+  };
+
+  const chooseDeck = async (id) => {
+    if (id === p.deck) return;
+    const own = [...meanings.values()].filter(hasOwn).length;
+    if (own && !confirm(`Switch ${p.name || "this psychic"} to ${state.decks[id].name.toLowerCase()}? Their ${own} card meaning${own === 1 ? "" : "s"} for ${deck.name.toLowerCase()} will be removed (you can get them back from History).`)) {
+      return drawDeck(wrap);
+    }
+    if (!(await flushSave())) return;
+    try {
+      const { psychic } = await api("PUT", `/api/psychics/${p.id}/deck`, { deck: id, cardMeanings: [] });
+      state.psychic = psychic;
+      state.openCard = null;
+      await refreshList();
+      renderHeader();
+      renderTabs();
+      drawDeck(wrap);
+    } catch (err) {
+      toast(err.message);
+    }
+  };
+
+  const picker = h("fieldset", { className: "deck-picker" },
+    h("legend", {}, "Reads with"),
+    ...Object.entries(state.decks).map(([id, d]) =>
+      h("label", { className: "radio" },
+        h("input", { type: "radio", name: "deck", value: id, checked: p.deck === id, onchange: () => chooseDeck(id) }),
+        h("span", {}, d.name, h("span", { className: "hint inline" }, d.reversals ? " · cards can land reversed" : " · read upright only"))),
+    ),
+  );
+
+  const summary = (m) => {
+    if (!hasOwn(m)) return "Traditional meaning";
+    return [m.upright && "upright", deck.reversals && m.reversed && "reversed", m.memory && "memory"].filter(Boolean).join(" · ");
+  };
+
+  const cardRow = (name) => {
+    const m = meanings.get(name) ?? { card: name, upright: "", reversed: "", memory: "" };
+    const open = state.openCard === name;
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    const note = h("span", { className: hasOwn(m) ? "size own" : "size" }, summary(m));
+    const toggle = async () => {
+      // Redrawing rebuilds the meanings from the saved psychic, so save first.
+      if (!(await flushSave())) return;
+      state.openCard = open ? null : name;
+      drawDeck(wrap);
+      if (!open) document.getElementById(`card-${slug}-upright`)?.focus();
+    };
+    const field = (key, label, hint, placeholder) => [
+      h("label", { for: `card-${slug}-${key}` }, label),
+      hint ? h("p", { className: "hint" }, hint) : null,
+      h("textarea", {
+        id: `card-${slug}-${key}`, value: m[key], rows: 2, placeholder,
+        oninput: (e) => {
+          m[key] = e.target.value;
+          meanings.set(name, m);
+          note.textContent = summary(m);
+          note.className = hasOwn(m) ? "size own" : "size";
+          scheduleSave(save);
+        },
+      }),
+    ];
+    return h("li", { className: open ? "open" : null },
+      h("div", { className: "doc-row" },
+        h("button", { className: "title", type: "button", "aria-expanded": String(open), onclick: toggle }, name),
+        note),
+      open
+        ? h("div", { className: "doc-edit" },
+            ...field("upright", deck.reversals ? "Upright" : "Their meaning", "Leave a box empty to use the traditional meaning.", "What this card means when they read it"),
+            ...(deck.reversals ? field("reversed", "Reversed", null, "What it means when it lands upside down") : []),
+            ...field("memory", "A memory", "Optional. Something in their life this card is tied to. They bring it up now and then, not every time.", "e.g. It turned up the week my cousin eloped."),
+            h("div", { className: "row" },
+              h("button", { className: "ghost", type: "button", onclick: toggle }, "Done"),
+              h("span", { className: "spacer" }),
+              state.claude
+                ? h("button", {
+                    className: "ghost claude", type: "button",
+                    onclick: (e) => draftCard(name, e.currentTarget),
+                  }, hasOwn(m) ? "✦ Rewrite with Claude" : "✦ Write with Claude")
+                : null,
+            ),
+          )
+        : null,
+    );
+  };
+
+  const filter = h("label", { className: "switch" },
+    h("input", { type: "checkbox", role: "switch", checked: state.onlyOwn, onchange: async (e) => { state.onlyOwn = e.target.checked; await flushSave(); drawDeck(wrap); } }),
+    h("span", {}, "Only cards with their own meaning"));
+
+  const groups = deck.groups
+    .map((g) => ({ ...g, cards: state.onlyOwn ? g.cards.filter((c) => hasOwn(meanings.get(c))) : g.cards }))
+    .filter((g) => g.cards.length);
+
+  wrap.replaceChildren(
+    h("p", { className: "hint intro" },
+      "The app draws real cards and tells the psychic what came up, with each card's traditional meaning. Give a card their own meaning and they read it their way instead: that's where a reader's personality shows. A handful of favourite or feared cards goes a long way."),
+    picker,
+    h("div", { className: "row deck-tools" }, filter),
+    ...(groups.length
+      ? groups.map((g) => h("section", { className: "card-group" }, h("h3", {}, g.name), h("ul", { className: "docs" }, g.cards.map(cardRow))))
+      : [h("p", { className: "empty" }, `${p.name || "This psychic"} reads every card the traditional way so far. Switch the filter off and open a card to give it their own meaning.`)]),
+  );
+  wrap.querySelectorAll("textarea").forEach(autoGrow);
+}
+
+// ---------- Writing with Claude ----------
+// Claude reads everything written about the psychic (fields, documents, examples, card meanings) and writes
+// what's asked for. The result is saved as one version, so it can be undone here or from History.
+
+function claudeButton() {
+  return h("button", {
+    className: "ghost claude header-claude", type: "button",
+    disabled: !state.claude,
+    title: state.claude ? "Claude reads everything written so far and drafts more" : "Add ANTHROPIC_API_KEY to the studio's settings to write with Claude",
+    onclick: () => openClaudeDialog(),
+  }, "✦ Write with Claude");
+}
+
+/** What the dialog offers first, from the tab you're on and what's still missing. */
+function claudePreset() {
+  const p = state.psychic;
+  const missing = new Set(p.missing);
+  const personaEmpty = [...FIELDS.map((f) => f.key)].some((k) => (Array.isArray(p[k]) ? !p[k].length : !String(p[k] ?? "").trim()));
+  const appEmpty = !p.builtIn && p.appMissing.length ? "empty" : "";
+  if (missing.size) {
+    return { persona: personaEmpty ? "empty" : "", app: appEmpty, examples: missing.has("examples") ? 6 : 0, cards: p.cardMeanings.length ? 0 : 8, document: "" };
+  }
+  const none = { persona: "", app: "", examples: 0, cards: 0, document: "" };
+  switch (state.tab) {
+    case "app": return { ...none, app: appEmpty || "all" };
+    case "examples": return { ...none, examples: 6 };
+    case "deck": return { ...none, cards: 8 };
+    case "documents": return { ...none, document: "Their family and the people in their life" };
+    default: return { ...none, persona: personaEmpty ? "empty" : "all", app: appEmpty };
+  }
+}
+
+async function runClaude(body) {
+  const p = state.psychic;
+  if (!(await flushSave())) throw new Error("Your last change isn't saved yet. Fix that first.");
+  return api("POST", `/api/psychics/${p.id}/claude`, body);
+}
+
+async function showClaudeResult({ psychic, summary, undoVersionId }) {
+  state.psychic = psychic;
+  state.examples = psychic.examples.map((e) => ({ ...e }));
+  if (!state.examples.length) state.examples.push({ user: "", reply: "" });
+  await refreshList();
+  renderEditor();
+  const undo = undoVersionId
+    ? async () => {
+        const { psychic: back } = await api("POST", `/api/versions/${undoVersionId}/restore`);
+        state.psychic = back;
+        state.examples = back.examples.map((e) => ({ ...e }));
+        await refreshList();
+        renderEditor();
+        toast("Undone");
+      }
+    : null;
+  if (undo) undoToast(`Claude wrote ${summary}`, undo);
+  else toast(`Claude wrote ${summary}`);
+}
+
+async function draftCard(name, button) {
+  button.disabled = true;
+  button.textContent = "Writing…";
+  try {
+    const result = await runClaude({ cards: { names: [name] } });
+    state.openCard = name;
+    await showClaudeResult(result);
+  } catch (err) {
+    toast(err.message);
+    button.disabled = false;
+    button.textContent = "✦ Write with Claude";
+  }
+}
+
+function openClaudeDialog() {
+  const p = state.psychic;
+  const preset = claudePreset();
+  const deckName = p.deck === "playing" ? "playing cards" : "tarot cards";
+  const dialog = h("dialog", { className: "claude-dialog", "aria-labelledby": "claude-title" });
+  const status = h("p", { className: "hint claude-status", role: "status" });
+  const error = h("p", { className: "error", role: "alert" });
+
+  const option = (id, checked, label, extra) =>
+    h("div", { className: "claude-option" },
+      h("label", { className: "check" }, h("input", { type: "checkbox", id, checked }), h("span", {}, label)),
+      extra);
+  const select = (id, values, selected) =>
+    h("select", { id }, values.map(([v, t]) => h("option", { value: v, selected: String(v) === String(selected) }, t)));
+
+  const form = h("form", { method: "dialog" },
+    h("h2", { id: "claude-title" }, `Write with Claude`),
+    h("p", { className: "hint" },
+      `Claude reads everything written about ${p.name || "this psychic"} so far, ${p.documents.length === 0 ? "(add documents first for the best results)" : p.documents.length === 1 ? "including its document" : `including all ${p.documents.length} documents`}, and writes in the same voice. What it writes is saved as one version: undo it right after, or from History.`),
+    option("cl-persona", Boolean(preset.persona), "Persona fields",
+      select("cl-persona-mode", [["empty", "Fill the empty ones"], ["all", "Rewrite all of them"]], preset.persona || "empty")),
+    option("cl-app", Boolean(preset.app), "What the app shows",
+      select("cl-app-mode", [["empty", "Fill the empty fields"], ["all", "Rewrite all of it"]], preset.app || "empty")),
+    option("cl-examples", Boolean(preset.examples), "Example replies",
+      select("cl-examples-count", [[3, "3 more"], [6, "6 more"], [10, "10 more"]], preset.examples || 6)),
+    option("cl-cards", Boolean(preset.cards), `Their own meaning for ${deckName}`,
+      select("cl-cards-count", [[4, "4 cards"], [8, "8 cards"], [12, "12 cards"]], preset.cards || 8)),
+    option("cl-doc", Boolean(preset.document), "A background document about",
+      h("input", { id: "cl-doc-topic", value: preset.document, placeholder: "e.g. Her shop, her rivals, her first reading", maxLength: 300 })),
+    h("label", { for: "cl-notes" }, "Notes for Claude ", h("span", { className: "optional" }, "optional")),
+    h("textarea", { id: "cl-notes", rows: 3, placeholder: "e.g. Make her drier and funnier. She grew up in Naples and still runs her mother's bakery." }),
+    status,
+    error,
+    h("div", { className: "row end" },
+      h("button", { type: "button", className: "ghost", id: "cl-cancel", onclick: () => dialog.close() }, "Cancel"),
+      h("button", { type: "submit", className: "primary", id: "cl-go" }, "Write it"),
+    ),
+  );
+  dialog.append(form);
+  document.body.append(dialog);
+  dialog.addEventListener("close", () => dialog.remove());
+  // Typing a topic ticks its box.
+  form.querySelector("#cl-doc-topic").addEventListener("input", (e) => (form.querySelector("#cl-doc").checked = Boolean(e.target.value.trim())));
+
+  let busy = false;
+  dialog.addEventListener("cancel", (e) => { if (busy) e.preventDefault(); });
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const val = (id) => form.querySelector(`#${id}`);
+    const body = {
+      persona: val("cl-persona").checked ? val("cl-persona-mode").value : undefined,
+      app: val("cl-app").checked ? val("cl-app-mode").value : undefined,
+      examples: val("cl-examples").checked ? Number(val("cl-examples-count").value) : undefined,
+      cards: val("cl-cards").checked ? { count: Number(val("cl-cards-count").value) } : undefined,
+      document: val("cl-doc").checked ? val("cl-doc-topic").value.trim() : undefined,
+      notes: val("cl-notes").value,
+    };
+    if (body.document === "") return (error.textContent = "Say what the document should be about.");
+    if (!body.persona && !body.app && !body.examples && !body.cards && !body.document) return (error.textContent = "Tick at least one thing to write.");
+    error.textContent = "";
+    busy = true;
+    form.querySelectorAll("input, select, textarea, button").forEach((el) => (el.disabled = true));
+    const started = Date.now();
+    const tick = () => (status.textContent = `Claude is writing… ${Math.round((Date.now() - started) / 1000)}s. This usually takes under a minute.`);
+    tick();
+    const timer = setInterval(tick, 1000);
+    try {
+      const result = await runClaude(body);
+      busy = false;
+      dialog.close();
+      await showClaudeResult(result);
+    } catch (err) {
+      busy = false;
+      error.textContent = err.message;
+      status.textContent = "";
+      form.querySelectorAll("input, select, textarea, button").forEach((el) => (el.disabled = false));
+    } finally {
+      clearInterval(timer);
+    }
+  });
+  dialog.showModal();
 }
 
 // A short toast with an Undo button, for removals.
@@ -800,56 +1119,483 @@ function historyView() {
   );
 }
 
+// ---------- In the app ----------
+// What the iOS app shows: the home screen card, profile page, chat greeting and buttons.
+
+const APP_SECTIONS = [
+  { title: "Home screen", fields: [
+    { key: "short", label: "Short name", input: true, hint: "Used in buttons and sentences, like “Start a reading with Selene”.", placeholder: "e.g. Selene" },
+    { key: "tagline", label: "Tagline", input: true, required: true, hint: "One line under their name.", placeholder: "e.g. Reads the moon, and your texts." },
+    { key: "moods", label: "Daily moods", list: true, hint: "One per line. The app shows one each day.", placeholder: "e.g. Baking for the whole street" },
+    { key: "color", label: "Accent colour", color: true, hint: "The ring around their photo." },
+  ] },
+  { title: "Profile page", fields: [
+    { key: "bio", label: "Bio", required: true, hint: "Two or three sentences about them, in the third person.", placeholder: "e.g. A third-generation moon reader from a seaside town that may or may not exist…" },
+    { key: "tags", label: "Tags", list: true, hint: "Three short tags, one per line.", placeholder: "Tarot\nMoon phases\nGentle" },
+    { key: "sample", label: "A taste of a reading", hint: "A sentence or two in their voice.", placeholder: "e.g. There's a message you've been meaning to send. Send it today." },
+  ] },
+  { title: "Chat", fields: [
+    { key: "greeting", label: "Greeting", required: true, hint: "Their first message. {name} is replaced with the user's name.", placeholder: "e.g. Welcome, {name}. What weighs on your heart?" },
+    { key: "asks", label: "Suggested questions", list: true, required: true, hint: "Tappable questions under the chat, one per line.", placeholder: "Does my crush like me back?\nShould I text my ex?" },
+    { key: "signLine", label: "When they hear your star sign", hint: "{sign} is replaced.", placeholder: "e.g. Ah, a {sign}. I felt it before you said a word." },
+    { key: "welcomeBack", label: "Welcome back", hint: "When someone returns after a while. {name} is replaced.", placeholder: "e.g. There you are, {name}." },
+    { key: "defaultName", label: "What they call you without a name", input: true, placeholder: "e.g. love" },
+    { key: "typing", label: "Typing speed", select: [["", "Medium (default)"], ["slow", "Slow"], ["medium", "Medium"], ["fast", "Fast"]] },
+  ] },
+  { title: "Cards and ritual", fields: [
+    { key: "ritualButton", label: "Ritual button", input: true, hint: "Their main button in the chat. For new psychics it draws a card from their deck.", placeholder: "e.g. Cut the deck" },
+    { key: "ritualIntro", label: "What they say during the ritual", placeholder: "e.g. Cut with your left hand, my dear. Now, let me turn one over…" },
+    { key: "cardIntro", label: "Drawing one card", placeholder: "e.g. Let me turn one card for you…" },
+    { key: "spreadIntro", label: "Laying out a spread", hint: "{n} is the number of cards, as a word.", placeholder: "e.g. {n} cards, face down. We turn them one by one." },
+  ] },
+  { title: "Morning messages", fields: [
+    { key: "morningOpenings", label: "Openings", list: true, hint: "One per line. The morning notification starts with one of these.", placeholder: "Morning, love.\nKettle's on." },
+  ] },
+];
+const APP_KEYS = APP_SECTIONS.flatMap((s) => s.fields.map((f) => f.key));
+const APP_LABEL = Object.fromEntries(APP_SECTIONS.flatMap((s) => s.fields.map((f) => [f.key, f.label])));
+
+const fill = (text, name = "Alex") => (text || "").replaceAll("{name}", name).replaceAll("{sign}", "Leo").replaceAll("{n}", "three");
+
+/** A phone-shaped preview of the home card, profile and chat greeting. */
+function phonePreview(p, app = p.app) {
+  const color = app.color || "#8a6f4a";
+  const short = app.short || (p.name || "").replace(/^(madame|grandma|grandpa|oracle|auntie|aunt|uncle|the)\s+/i, "") || "They";
+  const mood = app.moods[0];
+  const greeting = app.greeting ? fill(app.greeting) : "";
+  return h("div", { className: "phone", "aria-label": "Preview of the app" },
+    h("div", { className: "phone-card" },
+      h("span", { className: "phone-avatar", style: `--ring:${color}` }, p.photoId ? h("img", { src: `/api/photos/${p.photoId}`, alt: "" }) : initials(p.name || p.id)),
+      h("div", {},
+        h("div", { className: "phone-name" }, p.name || p.id),
+        h("div", { className: "phone-specialty" }, p.specialty || "Specialty"),
+        h("div", { className: "phone-tagline" }, app.tagline || h("em", {}, "Tagline")),
+        mood ? h("div", { className: "phone-mood" }, `✦ ${mood}`) : null)),
+    h("div", { className: "phone-chat" },
+      greeting ? h("div", { className: "bubble" }, greeting) : h("div", { className: "bubble empty" }, "Greeting"),
+      ...(p.examples || []).filter((e) => e.user && e.reply).slice(0, 1).flatMap((e) => [
+        h("div", { className: "bubble user" }, e.user),
+        ...e.reply.split(/\n\s*\n/).slice(0, 3).map((b) => h("div", { className: "bubble" }, b.trim())),
+      ])),
+    h("div", { className: "phone-chips" },
+      h("span", { className: "chip gold" }, app.ritualButton || "Draw a card"),
+      ...(app.asks.length ? app.asks : ["Suggested question"]).slice(0, 2).map((q) => h("span", { className: "chip" }, q))),
+  );
+}
+
+function appView() {
+  const p = state.psychic;
+  const app = { ...p.app, tags: [...p.app.tags], asks: [...p.app.asks], moods: [...p.app.moods], morningOpenings: [...p.app.morningOpenings] };
+  const previewSlot = h("div", { className: "preview-slot" }, phonePreview(p, app));
+  const redraw = () => previewSlot.replaceChildren(phonePreview(p, app));
+
+  const save = async () => {
+    const { psychic } = await api("PUT", `/api/psychics/${p.id}/app`, { app, inApp: p.inApp });
+    state.psychic = psychic;
+    renderHeader();
+    renderTabs();
+    await refreshList();
+    showSwitch();
+  };
+
+  const switchSlot = h("div", {});
+  const showSwitch = () => {
+    const q = state.psychic;
+    if (q.builtIn) {
+      switchSlot.replaceChildren(h("p", { className: "hint intro" },
+        `${q.name} is built into the app. Anything written here replaces the app's own text, field by field; leave a field empty to keep what the app has.`));
+      return;
+    }
+    const blocked = q.missing.length ? "Finish the persona first: the app can only show a psychic who is live in readings."
+      : q.appMissing.length ? `Fill in ${q.appMissing.map((k) => APP_LABEL[k]?.toLowerCase() ?? k).join(", ")} to show ${q.name} in the app.` : "";
+    switchSlot.replaceChildren(h("div", { className: "show-in-app" },
+      h("label", { className: "switch" },
+        h("input", {
+          type: "checkbox", role: "switch", checked: q.inApp, disabled: Boolean(blocked) && !q.inApp,
+          onchange: async (e) => {
+            try {
+              await flushSave();
+              const { psychic } = await api("PUT", `/api/psychics/${q.id}/app`, { app, inApp: e.target.checked });
+              state.psychic = psychic;
+              await refreshList();
+              renderHeader();
+              showSwitch();
+              toast(psychic.inApp ? `${psychic.name} will appear in the app within a minute` : `${psychic.name} is hidden from the app`);
+            } catch (err) {
+              e.target.checked = !e.target.checked;
+              toast(err.message);
+            }
+          },
+        }),
+        h("span", {}, "Show in the app")),
+      h("p", { className: "hint" }, blocked || (q.inApp
+        ? "Users see them in the app next time it checks in. Turn this off to hide them again."
+        : "Ready. Turn this on when you're happy with them."))));
+  };
+  showSwitch();
+
+  const sections = APP_SECTIONS.map((sec) => h("fieldset", { className: "app-section" },
+    h("legend", {}, sec.title),
+    ...sec.fields.map((f) => {
+      const id = `a-${f.key}`;
+      const onInput = (v) => { app[f.key] = v; redraw(); scheduleSave(save); };
+      let control;
+      if (f.list) control = h("textarea", { id, rows: 2, value: app[f.key].join("\n"), placeholder: f.placeholder, oninput: (e) => onInput(e.target.value.split("\n").map((x) => x.trim()).filter(Boolean)) });
+      else if (f.select) control = h("select", { id, onchange: (e) => onInput(e.target.value) }, f.select.map(([v, t]) => h("option", { value: v, selected: app[f.key] === v }, t)));
+      else if (f.color) control = h("div", { className: "row" },
+        h("input", { id, type: "color", value: app.color || "#8a6f4a", oninput: (e) => onInput(e.target.value) }),
+        h("button", { type: "button", className: "link small", onclick: (e) => { onInput(""); e.target.previousSibling.value = "#8a6f4a"; } }, "Use the default"));
+      else if (f.input) control = h("input", { id, value: app[f.key], placeholder: f.placeholder, oninput: (e) => onInput(e.target.value) });
+      else control = h("textarea", { id, rows: 2, value: app[f.key], placeholder: f.placeholder, oninput: (e) => onInput(e.target.value) });
+      return h("div", { className: "field" },
+        h("label", { for: id }, f.label, f.required && !p.builtIn ? null : h("span", { className: "optional" }, " optional")),
+        f.hint ? h("p", { className: "hint" }, f.hint) : null,
+        control);
+    })));
+
+  return h("div", { className: "app-layout" },
+    h("div", {}, switchSlot, ...sections),
+    h("aside", { className: "app-preview" }, h("div", { className: "sticky" }, h("p", { className: "hint" }, "Preview"), previewSlot)));
+}
+
+// ---------- Guided setup ----------
+// Step by step: who they are, what to read, Claude writes them, review, photo, then into the app.
+
+const WIZARD = [
+  { key: "idea", title: "The idea" },
+  { key: "sources", title: "Background" },
+  { key: "deck", title: "Cards & tone" },
+  { key: "write", title: "Write them" },
+  { key: "review", title: "Review" },
+  { key: "photo", title: "Photo" },
+  { key: "live", title: "Go live" },
+];
+
+function wizardGo(step) {
+  forgetUnsaved();
+  location.hash = `#/${state.psychic.id}/create/${step}`;
+}
+
+function renderWizard() {
+  const p = state.psychic;
+  const index = WIZARD.findIndex((w) => w.key === state.wizardStep);
+  const step = WIZARD[index];
+  const steps = h("ol", { className: "steps" },
+    WIZARD.map((w, i) => h("li", { className: i < index ? "done" : i === index ? "current" : "" },
+      p && i !== index
+        ? h("a", { href: `#/${p.id}/create/${w.key}` }, h("span", { className: "n" }, i + 1), w.title)
+        : h("span", {}, h("span", { className: "n" }, i + 1), w.title))));
+  const body = {
+    idea: wizIdea, sources: wizSources, deck: wizDeck, write: wizWrite, review: wizReview, photo: wizPhoto, live: wizLive,
+  }[step.key]();
+  $("editor").replaceChildren(
+    h("div", { className: "editor-inner wizard" },
+      h("div", { className: "wizard-top" },
+        h("div", { className: "eyebrow" }, p ? `Setting up ${p.name}` : "New psychic"),
+        p ? h("a", { className: "link small", href: `#/${p.id}/persona` }, "Leave guided setup") : null),
+      steps,
+      h("section", { className: "wizard-body", "aria-live": "polite" }, body)),
+  );
+  $("editor").querySelector("[autofocus]")?.focus();
+  growAll();
+}
+
+const wizNav = (back, next, nextLabel = "Next", extra = null) =>
+  h("div", { className: "wizard-nav" },
+    back ? h("button", { type: "button", className: "ghost", onclick: back }, "← Back") : h("span", {}),
+    h("span", { className: "spacer" }),
+    extra,
+    next ? h("button", { type: "button", className: "primary", onclick: next }, nextLabel) : null);
+
+function wizIdea() {
+  const err = h("p", { className: "error", role: "alert" });
+  const name = h("input", { id: "wz-name", maxLength: 200, placeholder: "e.g. Auntie Luna", autocomplete: "off", autofocus: true });
+  const idPreview = h("span", { className: "hint" });
+  let edited = false;
+  const id = h("input", { id: "wz-id", maxLength: 32, placeholder: "luna", autocomplete: "off", oninput: () => { edited = true; showId(); } });
+  const idField = h("div", { hidden: true }, h("label", { for: "wz-id" }, "Id"), id,
+    h("p", { className: "hint" }, "Lowercase letters, numbers and dashes. It can't be changed later."));
+  const showId = () => (idPreview.textContent = id.value ? `Id: ${id.value}` : "");
+  name.addEventListener("input", () => { if (!edited) id.value = slugify(name.value); showId(); });
+  const idea = h("textarea", { id: "wz-idea", rows: 4, placeholder: "e.g. A 70-year-old launderette owner in Leeds who reads tarot between spin cycles. Dry, nosy, kind underneath." });
+  const specialty = h("input", { id: "wz-specialty", maxLength: 200, placeholder: "e.g. Money & second chances (optional, Claude can pick)" });
+
+  const next = async () => {
+    err.textContent = "";
+    if (!name.value.trim()) return (err.textContent = "Give them a name.");
+    try {
+      const { psychic } = await api("POST", "/api/psychics", { id: id.value.trim(), name: name.value.trim() });
+      if (specialty.value.trim()) await api("PUT", `/api/psychics/${psychic.id}`, { ...psychic, specialty: specialty.value.trim() });
+      if (idea.value.trim()) await api("POST", `/api/psychics/${psychic.id}/documents`, { title: "The idea", body: idea.value.trim() });
+      state.psychic = (await api("GET", `/api/psychics/${psychic.id}`)).psychic;
+      await refreshList();
+      wizardGo("sources");
+    } catch (e) {
+      err.textContent = e.message;
+      if (/id/i.test(e.message)) idField.hidden = false;
+    }
+  };
+
+  return h("div", {},
+    h("h2", {}, "Who are they?"),
+    h("p", { className: "lead" }, "Start with a name and a sentence or two. You'll add more background next, and Claude can write the rest."),
+    h("label", { for: "wz-name" }, "Name"), name,
+    h("p", { className: "hint row" }, idPreview, h("button", { type: "button", className: "link small", onclick: () => { idField.hidden = false; id.focus(); } }, "Change id")),
+    idField,
+    h("label", { for: "wz-idea" }, "The idea"), idea,
+    h("label", { for: "wz-specialty" }, "What they read about ", h("span", { className: "optional" }, "optional")), specialty,
+    err,
+    wizNav(null, next, "Create and continue →"));
+}
+
+function wizSources() {
+  const p = state.psychic;
+  const title = h("input", { id: "wz-doc-title", maxLength: 120, placeholder: "e.g. Family" });
+  const text = h("textarea", { id: "wz-doc-body", rows: 6, placeholder: "Paste or write anything about them: where they grew up, the people in their life, how they talk, what they believe, lines they'd say…" });
+  const add = async () => {
+    if (!text.value.trim()) return toast("Write or paste something first.");
+    try {
+      await api("POST", `/api/psychics/${p.id}/documents`, { title: title.value.trim() || titleFrom(text.value, "Background"), body: text.value.replace(/^# .+$/m, "").trim() });
+      await reloadPsychic();
+      renderWizard();
+      toast("Added");
+    } catch (e) { toast(e.message); }
+  };
+  const upload = h("input", { type: "file", accept: ".md,.markdown,.txt,text/plain,text/markdown", multiple: true, hidden: true,
+    onchange: (e) => { const f = [...e.target.files]; e.target.value = ""; addFiles(f); } });
+  const drop = h("div", { className: "dropzone",
+    ondragover: (e) => { e.preventDefault(); drop.classList.add("over"); },
+    ondragleave: () => drop.classList.remove("over"),
+    ondrop: (e) => { e.preventDefault(); drop.classList.remove("over"); addFiles(e.dataTransfer.files); } },
+    h("div", { className: "row" }, h("button", { type: "button", className: "ghost", onclick: () => upload.click() }, "Upload .md or .txt files"), upload),
+    h("p", { className: "hint" }, "Or drop files here."));
+
+  return h("div", {},
+    h("h2", {}, `What should Claude know about ${p.name}?`),
+    h("p", { className: "lead" }, "The more you give, the more specific they get. Notes, a character sketch, family, places, sayings: rough is fine. Each piece becomes a background document the psychic draws on in readings."),
+    p.documents.length
+      ? h("ul", { className: "source-list" }, p.documents.map((d) => h("li", {},
+          h("span", { className: "title" }, d.title || "Untitled"),
+          h("span", { className: "hint" }, formatSize(d.body.length)),
+          h("button", { type: "button", className: "link small", onclick: async () => {
+            if (!confirm(`Remove "${d.title || "Untitled"}"?`)) return;
+            await api("DELETE", `/api/documents/${d.id}`);
+            await reloadPsychic();
+            renderWizard();
+          } }, "Remove"))))
+      : h("p", { className: "empty" }, "Nothing yet."),
+    h("div", { className: "source-add" },
+      h("label", { for: "wz-doc-title" }, "Title ", h("span", { className: "optional" }, "optional")), title,
+      h("label", { for: "wz-doc-body" }, "Text"), text,
+      h("div", { className: "row" }, h("button", { type: "button", className: "ghost", onclick: add }, "+ Add this"))),
+    drop,
+    wizNav(null, () => wizardGo("deck"), p.documents.length ? "Next →" : "Skip for now →"));
+}
+
+/** Tone notes from the guided setup, kept in this browser per psychic so a reload doesn't lose them. */
+function wizardNotes(id) {
+  try { return localStorage.getItem(`wizard-notes:${id}`) ?? ""; } catch { return ""; }
+}
+function setWizardNotes(id, text) {
+  try { localStorage.setItem(`wizard-notes:${id}`, text); } catch { /* private mode: notes last until reload */ }
+  state.wizardNotes = text;
+}
+
+function wizDeck() {
+  const p = state.psychic;
+  const notes = h("textarea", { id: "wz-notes", rows: 3, value: state.wizardNotes || wizardNotes(p.id), placeholder: "e.g. Deadpan but soft underneath. Never mean. Loves bingo metaphors.",
+    oninput: (e) => setWizardNotes(p.id, e.target.value) });
+  const choose = async (deck) => {
+    try {
+      const { psychic } = await api("PUT", `/api/psychics/${p.id}/deck`, { deck, cardMeanings: deck === p.deck ? p.cardMeanings : [] });
+      state.psychic = psychic;
+    } catch (e) { toast(e.message); }
+  };
+  const card = (deck, title, text) => h("label", { className: "choice" },
+    h("input", { type: "radio", name: "wz-deck", checked: p.deck === deck, onchange: () => choose(deck) }),
+    h("span", {}, h("strong", {}, title), h("span", { className: "hint" }, text)));
+  return h("div", {},
+    h("h2", {}, "Cards and tone"),
+    h("p", { className: "lead" }, "Every psychic can lay out real cards in a reading. Pick their deck, and tell Claude anything about the tone you're after."),
+    h("div", { className: "choices" },
+      card("tarot", "Tarot", "78 cards with pictures, and cards can land reversed. Most psychics read tarot."),
+      card("playing", "Playing cards", "An ordinary 52-card deck read the old way: hearts for love, spades for hard truths.")),
+    h("label", { for: "wz-notes" }, "Notes for Claude ", h("span", { className: "optional" }, "optional")),
+    notes,
+    wizNav(() => wizardGo("sources"), () => wizardGo("write"), "Next →"));
+}
+
+function wizWrite() {
+  const p = state.psychic;
+  if (!state.claude) {
+    return h("div", {},
+      h("h2", {}, `Write ${p.name}`),
+      h("p", { className: "lead" }, "Claude isn't set up in this studio (it needs ANTHROPIC_API_KEY in the studio's settings), so this part is by hand: fill in the Persona and In the app tabs and add a few example replies. Then come back for the photo."),
+      wizNav(() => wizardGo("deck"), () => go(p.id, "persona"), "Open the persona tab"));
+  }
+  const parts = [
+    ["persona", "Their character: backstory, voice, texting style, quirks and how they read"],
+    ["app", "What the app shows: tagline, bio, greeting, suggested questions, moods"],
+    ["examples", "6 example replies in their voice"],
+    ["cards", `Their own meaning for 8 ${p.deck === "playing" ? "playing cards" : "tarot cards"}`],
+  ];
+  const checks = Object.fromEntries(parts.map(([k]) => [k, h("input", { type: "checkbox", checked: true })]));
+  const status = h("div", { className: "writing", hidden: true });
+  const err = h("p", { className: "error", role: "alert" });
+  const goBtn = h("button", { type: "button", className: "primary big" }, `✦ Write ${p.name} with Claude`);
+  goBtn.addEventListener("click", async () => {
+    const body = {
+      // Fill what's empty: keeps anything already written, like a specialty typed in the first step.
+      persona: checks.persona.checked ? "empty" : undefined,
+      app: checks.app.checked ? "empty" : undefined,
+      examples: checks.examples.checked ? 6 : undefined,
+      cards: checks.cards.checked ? { count: 8 } : undefined,
+      notes: state.wizardNotes || wizardNotes(p.id),
+    };
+    if (!body.persona && !body.app && !body.examples && !body.cards) return (err.textContent = "Tick at least one thing.");
+    err.textContent = "";
+    goBtn.disabled = true;
+    Object.values(checks).forEach((c) => (c.disabled = true));
+    status.hidden = false;
+    const started = Date.now();
+    const lines = ["Reading the background…", "Finding their voice…", "Writing the greeting…", "Shuffling the deck…", "Trying out replies…", "Nearly there…"];
+    const tick = () => {
+      const t = Math.round((Date.now() - started) / 1000);
+      status.replaceChildren(h("span", { className: "orb", "aria-hidden": "true" }), h("span", {}, `${lines[Math.min(Math.floor(t / 9), lines.length - 1)]} ${t}s`));
+    };
+    tick();
+    const timer = setInterval(tick, 1000);
+    try {
+      const result = await runClaude(body);
+      state.psychic = result.psychic;
+      await refreshList();
+      wizardGo("review");
+      toast(`Claude wrote ${result.summary}`);
+    } catch (e) {
+      err.textContent = e.message;
+      goBtn.disabled = false;
+      Object.values(checks).forEach((c) => (c.disabled = false));
+      status.hidden = true;
+    } finally {
+      clearInterval(timer);
+    }
+  });
+  return h("div", {},
+    h("h2", {}, `Write ${p.name}`),
+    h("p", { className: "lead" }, `Claude reads the idea${p.documents.length > 1 ? ` and all ${p.documents.length} documents` : p.documents.length ? " and the background" : ""} and writes the rest in one go. It takes about a minute. Everything is saved as one version you can undo, and you'll review it next.`),
+    h("ul", { className: "write-list" }, parts.map(([k, label]) => h("li", {}, h("label", { className: "check" }, checks[k], h("span", {}, label))))),
+    status,
+    err,
+    h("div", { className: "row center" }, goBtn),
+    wizNav(() => wizardGo("deck"), null, "", h("button", { type: "button", className: "link", onclick: () => wizardGo("review") }, "Skip, I'll write it myself")));
+}
+
+function wizReview() {
+  const p = state.psychic;
+  const section = (title, tab, ...content) => h("section", { className: "review-card" },
+    h("div", { className: "row" }, h("h3", {}, title), h("span", { className: "spacer" }), h("a", { className: "link small", href: `#/${p.id}/${tab}` }, "Edit")),
+    ...content);
+  const quote = (t) => (t ? h("p", { className: "review-text" }, t) : h("p", { className: "hint" }, "Not written yet."));
+  const rewriteNotes = h("textarea", { rows: 2, placeholder: "What should change? e.g. Funnier, shorter messages, less about cats." });
+  const rewrite = h("button", { type: "button", className: "ghost claude" }, "✦ Rewrite with these notes");
+  rewrite.addEventListener("click", async () => {
+    if (!rewriteNotes.value.trim()) return toast("Say what should change first.");
+    rewrite.disabled = true;
+    rewrite.textContent = "Rewriting…";
+    try {
+      const result = await runClaude({ persona: "all", app: "all", notes: `${state.wizardNotes || wizardNotes(p.id)}\n${rewriteNotes.value}`.trim() });
+      state.psychic = result.psychic;
+      await refreshList();
+      renderWizard();
+      if (result.undoVersionId) undoToast(`Claude rewrote ${p.name}`, async () => {
+        state.psychic = (await api("POST", `/api/versions/${result.undoVersionId}/restore`)).psychic;
+        renderWizard();
+      });
+    } catch (e) {
+      toast(e.message);
+      rewrite.disabled = false;
+      rewrite.textContent = "✦ Rewrite with these notes";
+    }
+  });
+  return h("div", {},
+    h("h2", {}, `Meet ${p.name}`),
+    h("p", { className: "lead" }, "Read it through. Edit anything directly, or tell Claude what to change."),
+    h("div", { className: "review-layout" },
+      h("div", {},
+        section("Who they are", "persona",
+          h("p", { className: "review-label" }, p.specialty || "No specialty yet"),
+          quote(p.backstory),
+          p.catchphrases.length ? h("p", { className: "hint" }, p.catchphrases.map((c) => `“${c}”`).join("  ·  ")) : null),
+        section("How they sound", "persona", quote(p.voice), quote(p.texting)),
+        section("How they read cards", "deck",
+          quote(p.howIRead),
+          p.cardMeanings.length ? h("p", { className: "hint" }, `Their own meaning for ${p.cardMeanings.map((m) => m.card).join(", ")}.`) : null),
+        section("Example replies", "examples",
+          p.examples.length ? h("p", { className: "hint" }, `${p.examples.length} written. The preview shows the first.`) : quote("")),
+        state.claude ? h("section", { className: "review-card" }, h("h3", {}, "Not quite right?"), rewriteNotes, h("div", { className: "row" }, rewrite)) : null),
+      h("aside", { className: "app-preview" }, h("div", { className: "sticky" }, h("p", { className: "hint" }, "In the app"), phonePreview(p)))),
+    wizNav(() => wizardGo("write"), () => wizardGo("photo"), "Looks good →"));
+}
+
+function wizPhoto() {
+  const p = state.psychic;
+  return h("div", {},
+    h("h2", {}, `A photo of ${p.name}`),
+    h("p", { className: "lead" }, "A square portrait works best. It's cropped to a circle and shrunk to 800 px. You can skip this and add one later."),
+    h("div", { className: "photo-step" }, photoPicker(p)),
+    wizNav(() => wizardGo("review"), () => wizardGo("live"), p.photoId ? "Next →" : "Skip for now →"));
+}
+
+function wizLive() {
+  const p = state.psychic;
+  const row = (ok, title, detail, link) => h("li", { className: ok ? "ok" : "pending" },
+    h("span", { className: "mark", "aria-hidden": "true" }, ok ? "✓" : "○"),
+    h("div", {}, h("strong", {}, title), h("div", { className: "hint" }, detail)),
+    !ok && link ? h("a", { className: "link small", href: link }, "Fill in") : null);
+  const live = !p.missing.length;
+  const appReady = !p.appMissing.length;
+  const canShow = live && appReady;
+  const toggle = h("input", { type: "checkbox", role: "switch", checked: p.inApp, disabled: !canShow && !p.inApp });
+  toggle.addEventListener("change", async () => {
+    try {
+      const { psychic } = await api("PUT", `/api/psychics/${p.id}/app`, { app: p.app, inApp: toggle.checked });
+      state.psychic = psychic;
+      await refreshList();
+      renderWizard();
+    } catch (e) { toggle.checked = !toggle.checked; toast(e.message); }
+  });
+  return h("div", {},
+    h("h2", {}, p.inApp ? `${p.name} is in the app ✦` : `Put ${p.name} in the app`),
+    h("p", { className: "lead" }, p.builtIn
+      ? `${p.name} is built into the app, so they're always there. Changes reach readings within a minute.`
+      : "Once they're live in readings and the app has what it needs, switch them on. Users see them the next time the app checks in, no app update needed."),
+    h("ul", { className: "checklist" },
+      row(live, "Live in readings", live ? "Their character is complete." : `Still missing: ${p.missing.map((m) => PART[m]?.label ?? m).join(", ")}.`, `#/${p.id}/persona`),
+      row(appReady, "Ready for the app", appReady ? "Tagline, bio, greeting and suggested questions are in." : `Still missing: ${p.appMissing.map((m) => APP_LABEL[m] ?? m).join(", ")}.`, `#/${p.id}/app`),
+      row(Boolean(p.photoId), "Photo", p.photoId ? "Looking good." : "Optional. Without one, the app shows their initial.", `#/${p.id}/create/photo`)),
+    p.builtIn ? null : h("div", { className: "show-in-app big" },
+      h("label", { className: "switch" }, toggle, h("span", {}, "Show in the app"))),
+    wizNav(() => wizardGo("photo"), () => go(p.id, "persona"), "Finish"));
+}
+
 // ---------- New psychic ----------
 function slugify(name) {
   return name.toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "")
-    .replace(/^(madame|grandma|oracle|auntie|the)\s+/, "")
+    .replace(/^(madame|grandma|grandpa|oracle|auntie|aunt|uncle|the)\s+/, "")
     .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 32);
 }
 
-let idEdited = false;
-async function openNewDialog() {
+$("new-psychic").addEventListener("click", async () => {
   if (!(await canLeave())) return;
-  $("new-form").reset();
-  $("new-error").textContent = "";
-  $("new-id-preview").textContent = "";
-  $("new-id-field").hidden = true;
-  idEdited = false;
-  $("new-dialog").showModal();
-}
-$("new-psychic").addEventListener("click", openNewDialog);
-$("new-cancel").addEventListener("click", () => $("new-dialog").close());
-$("new-name").addEventListener("input", () => {
-  if (!idEdited) $("new-id").value = slugify($("new-name").value);
-  $("new-id-preview").textContent = $("new-id").value ? `Id: ${$("new-id").value}` : "";
-});
-$("new-id-edit").addEventListener("click", () => {
-  $("new-id-field").hidden = false;
-  $("new-id").focus();
-});
-$("new-id").addEventListener("input", () => {
-  idEdited = true;
-  $("new-id-preview").textContent = $("new-id").value ? `Id: ${$("new-id").value}` : "";
-});
-$("new-form").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  try {
-    const { psychic } = await api("POST", "/api/psychics", { id: $("new-id").value.trim(), name: $("new-name").value.trim() });
-    $("new-dialog").close();
-    forgetUnsaved();
-    await refreshList();
-    go(psychic.id, "persona");
-    toast(`${psychic.name} created. Fill in the list at the top to make them live.`);
-  } catch (err) {
-    $("new-error").textContent = err.message;
-    if (/id/i.test(err.message)) $("new-id-field").hidden = false;
-  }
+  forgetUnsaved();
+  location.hash = "#/new";
 });
 
 // ---------- Start ----------
 async function start() {
   $("login").hidden = true;
   $("app").hidden = false;
+  state.claude = Boolean((await api("GET", "/api/me")).claude);
   await refreshList();
   await route();
 }

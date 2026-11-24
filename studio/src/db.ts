@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { type DeckId, cardName, isDeck } from "./cards.ts";
 
 export const PERSONA_FIELDS = [
   "name", "specialty", "backstory", "voice", "texting", "quirks", "others", "ritual",
@@ -12,7 +13,57 @@ export const LIST_FIELDS = ["catchphrases", "never"] as const;
 type TextField = (typeof PERSONA_FIELDS)[number];
 type ListField = (typeof LIST_FIELDS)[number];
 
-export type Persona = Record<TextField, string> & Record<ListField, string[]>;
+/** Required fields, plus "How I read", which is optional so older psychics stay live without it. */
+export type Persona = Record<TextField, string> & Record<ListField, string[]> & { howIRead: string };
+
+/** A psychic's own reading of one card. Blank parts fall back to the traditional meaning. */
+export interface CardMeaning {
+  card: string;
+  upright: string;
+  reversed: string;
+  memory: string;
+}
+
+/** What the iOS app shows for a psychic: the home screen card, profile page, chat greeting and so on. */
+export const APP_TEXT_FIELDS = [
+  "short", "tagline", "bio", "greeting", "signLine", "welcomeBack", "defaultName", "sample",
+  "cardIntro", "spreadIntro", "ritualButton", "ritualIntro", "color", "typing",
+] as const;
+export const APP_LIST_FIELDS = ["tags", "asks", "moods", "morningOpenings"] as const;
+export type AppProfile = Record<(typeof APP_TEXT_FIELDS)[number], string> & Record<(typeof APP_LIST_FIELDS)[number], string[]>;
+
+/** Psychics built into the iOS app. Their app profile only overrides the built-in text, field by field. */
+export const BUILT_IN = new Set(["selene", "kaz", "ivy", "zephyr", "mirela"]);
+
+export function emptyApp(): AppProfile {
+  const a = {} as AppProfile;
+  for (const f of APP_TEXT_FIELDS) a[f] = "";
+  for (const f of APP_LIST_FIELDS) a[f] = [];
+  return a;
+}
+
+function toApp(json: unknown): AppProfile {
+  const a = emptyApp();
+  let raw: Record<string, unknown> = {};
+  try { raw = typeof json === "string" ? JSON.parse(json) : {}; } catch { /* empty */ }
+  for (const f of APP_TEXT_FIELDS) if (typeof raw[f] === "string") a[f] = raw[f] as string;
+  for (const f of APP_LIST_FIELDS) if (Array.isArray(raw[f])) a[f] = (raw[f] as unknown[]).filter((x): x is string => typeof x === "string");
+  return a;
+}
+
+/** App fields a new psychic needs before the app can show them. Built-in psychics need none. */
+export function missingForApp(p: { id: string; app: AppProfile }): string[] {
+  if (BUILT_IN.has(p.id)) return [];
+  const missing: string[] = [];
+  for (const f of ["tagline", "bio", "greeting"] as const) if (!p.app[f].trim()) missing.push(f);
+  if (!p.app.asks.length) missing.push("asks");
+  return missing;
+}
+
+export interface Deck {
+  deck: DeckId;
+  cardMeanings: CardMeaning[];
+}
 
 export interface Example {
   user: string;
@@ -27,8 +78,11 @@ export interface Doc {
   updatedAt: string;
 }
 
-export interface Psychic extends Persona {
+export interface Psychic extends Persona, Deck {
   id: string;
+  app: AppProfile;
+  /** The editor switched on "Show in the app". */
+  inApp: boolean;
   updatedAt: string;
   /** Changes whenever the photo does; null when there's no photo. */
   photoId: number | null;
@@ -37,7 +91,9 @@ export interface Psychic extends Persona {
 }
 
 /** The shape the reading server expects (matches PsychicPersona in server/src/psychics.ts). */
-export interface PublishedPersona extends Persona {
+export interface PublishedPersona extends Persona, Deck {
+  /** For the iOS app; `show` says whether a psychic that isn't built in should appear. */
+  app: AppProfile & { show: boolean };
   /** Id of the current photo (fetch it from /v1/photos/<id>); null when there's none. Changes when the photo does. */
   photoId: number | null;
   examples: Example[];
@@ -99,10 +155,33 @@ db.exec(`
   );
 `);
 
-// Older databases: add the photo pointer to psychics.
-if (!(db.prepare("PRAGMA table_info(psychics)").all() as { name: string }[]).some((c) => c.name === "photo_id")) {
-  db.exec("ALTER TABLE psychics ADD COLUMN photo_id INTEGER");
+// Older databases: add newer columns to psychics.
+const columns = () => (db.prepare("PRAGMA table_info(psychics)").all() as { name: string }[]).map((c) => c.name);
+if (!columns().includes("photo_id")) db.exec("ALTER TABLE psychics ADD COLUMN photo_id INTEGER");
+/** True when this start added "How I read" and decks: psychics created before then can be filled from the files. */
+export const addedDecks = !columns().includes("deck");
+if (addedDecks) {
+  db.exec(`
+    ALTER TABLE psychics ADD COLUMN how_i_read TEXT NOT NULL DEFAULT '';
+    ALTER TABLE psychics ADD COLUMN deck TEXT NOT NULL DEFAULT 'tarot';
+  `);
 }
+if (!columns().includes("app")) {
+  db.exec(`
+    ALTER TABLE psychics ADD COLUMN app TEXT NOT NULL DEFAULT '{}';
+    ALTER TABLE psychics ADD COLUMN in_app INTEGER NOT NULL DEFAULT 0;
+  `);
+}
+db.exec(`
+  CREATE TABLE IF NOT EXISTS card_meanings (
+    psychic_id TEXT NOT NULL REFERENCES psychics(id) ON DELETE CASCADE,
+    card TEXT NOT NULL,
+    upright TEXT NOT NULL DEFAULT '',
+    reversed TEXT NOT NULL DEFAULT '',
+    memory TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (psychic_id, card)
+  );
+`);
 
 let txDepth = 0;
 
@@ -129,6 +208,7 @@ function toPersona(row: Row): Persona {
   const p = {} as Persona;
   for (const f of PERSONA_FIELDS) p[f] = String(row[f] ?? "");
   for (const f of LIST_FIELDS) p[f] = JSON.parse(String(row[f] ?? "[]"));
+  p.howIRead = String(row.how_i_read ?? "");
   return p;
 }
 
@@ -168,6 +248,9 @@ export function listPsychics() {
       exampleCount: Number(row.example_count),
       documentCount: Number(row.document_count),
       missing: missingParts(psychic),
+      appMissing: missingForApp(psychic),
+      inApp: psychic.inApp,
+      builtIn: BUILT_IN.has(psychic.id),
       promptChars: promptChars(psychic),
     };
   });
@@ -183,7 +266,14 @@ export function getPsychic(id: string): Psychic | null {
     db.prepare("SELECT * FROM documents WHERE psychic_id = ? ORDER BY title COLLATE NOCASE, id").all(id) as Row[]
   ).map(toDoc);
   const photoId = row.photo_id === null || row.photo_id === undefined ? null : Number(row.photo_id);
-  return { id, updatedAt: String(row.updated_at), photoId, ...toPersona(row), examples, documents };
+  const deck: DeckId = isDeck(row.deck) ? row.deck : "tarot";
+  const cardMeanings = (
+    db.prepare("SELECT card, upright, reversed, memory FROM card_meanings WHERE psychic_id = ? ORDER BY rowid").all(id) as Row[]
+  ).map((m) => ({ card: String(m.card), upright: String(m.upright), reversed: String(m.reversed), memory: String(m.memory) }));
+  return {
+    id, updatedAt: String(row.updated_at), photoId, ...toPersona(row), deck, cardMeanings,
+    app: toApp(row.app), inApp: Boolean(row.in_app), examples, documents,
+  };
 }
 
 export function createPsychic(id: string, name: string) {
@@ -196,13 +286,38 @@ export function createPsychic(id: string, name: string) {
 export function updatePersona(id: string, persona: Persona) {
   db.prepare(`
     UPDATE psychics SET name = ?, specialty = ?, backstory = ?, voice = ?, texting = ?,
-      catchphrases = ?, never = ?, quirks = ?, others = ?, ritual = ?, updated_at = datetime('now')
+      catchphrases = ?, never = ?, quirks = ?, others = ?, ritual = ?, how_i_read = ?, updated_at = datetime('now')
     WHERE id = ?`).run(
     persona.name, persona.specialty, persona.backstory, persona.voice, persona.texting,
     JSON.stringify(persona.catchphrases), JSON.stringify(persona.never),
-    persona.quirks, persona.others, persona.ritual, id,
+    persona.quirks, persona.others, persona.ritual, persona.howIRead ?? "", id,
   );
   record(id, "persona", "Edited the persona", true);
+}
+
+/** Saves what the app shows for this psychic, and whether a new psychic appears in the app. */
+export function updateApp(id: string, app: AppProfile, inApp: boolean) {
+  const before = getPsychic(id);
+  db.prepare("UPDATE psychics SET app = ?, in_app = ?, updated_at = datetime('now') WHERE id = ?")
+    .run(JSON.stringify(app), inApp ? 1 : 0, id);
+  if (before && before.inApp !== inApp) record(id, "app-show", inApp ? "Shown in the app" : "Hidden from the app");
+  else record(id, "app", "Edited the app profile", true);
+}
+
+/** Sets the deck and replaces the psychic's own card meanings. Meanings for cards not in the deck are dropped. */
+export function updateDeck(id: string, deck: Deck) {
+  tx(() => {
+    db.prepare("UPDATE psychics SET deck = ?, updated_at = datetime('now') WHERE id = ?").run(deck.deck, id);
+    db.prepare("DELETE FROM card_meanings WHERE psychic_id = ?").run(id);
+    const insert = db.prepare(
+      "INSERT OR REPLACE INTO card_meanings (psychic_id, card, upright, reversed, memory) VALUES (?, ?, ?, ?, ?)",
+    );
+    for (const m of deck.cardMeanings) {
+      const card = cardName(deck.deck, m.card);
+      if (card && (m.upright || m.reversed || m.memory)) insert.run(id, card, m.upright, m.reversed, m.memory);
+    }
+    record(id, "deck", "Edited the deck", true);
+  });
 }
 
 export function deletePsychic(id: string) {
@@ -278,6 +393,10 @@ export function publish(p: Psychic): PublishedPersona {
   for (const f of LIST_FIELDS) persona[f] = p[f];
   return {
     ...persona,
+    howIRead: p.howIRead,
+    deck: p.deck,
+    cardMeanings: p.cardMeanings,
+    app: { ...p.app, show: p.inApp && !missingForApp(p).length },
     photoId: p.photoId,
     examples: p.examples.filter(isComplete),
     notes: p.documents.filter((d) => d.enabled && d.body.trim()).map((d) => ({ title: d.title || "Background", body: d.body })),
@@ -301,15 +420,90 @@ export function publishedPersonas(): Record<string, PublishedPersona> {
   return out;
 }
 
-export function importPsychic(id: string, persona: Persona, examples: Example[], docs: { title: string; body: string }[]) {
+export function importPsychic(
+  id: string, persona: Persona, examples: Example[], docs: { title: string; body: string }[], deck: Deck,
+) {
   tx(() => {
     quietly(() => {
       createPsychic(id, persona.name);
       updatePersona(id, persona);
+      updateDeck(id, deck);
       replaceExamples(id, examples);
       for (const d of docs) createDocument(id, d.title, d.body);
     });
     record(id, "imported", "Imported from the markdown files");
+  });
+}
+
+/**
+ * Fills in "How I read" and the deck for a psychic that has neither yet, from the markdown files.
+ * Used once, when a database from before decks existed is upgraded.
+ */
+export function fillReadingStyle(id: string, howIRead: string, deck: Deck): boolean {
+  const p = getPsychic(id);
+  if (!p || p.howIRead || p.cardMeanings.length || (!howIRead && !deck.cardMeanings.length && deck.deck === "tarot")) return false;
+  tx(() => {
+    quietly(() => {
+      db.prepare("UPDATE psychics SET how_i_read = ? WHERE id = ?").run(howIRead, id);
+      updateDeck(id, deck);
+    });
+    record(id, "imported", "Added how they read cards, from the markdown files");
+  });
+  return true;
+}
+
+// ---- Drafts from Claude ----
+
+/** The newest version of a psychic: going back to it undoes whatever happens next. */
+export function latestVersionId(psychicId: string): number | null {
+  const row = db.prepare("SELECT id FROM revisions WHERE psychic_id = ? ORDER BY id DESC LIMIT 1").get(psychicId) as Row | undefined;
+  return row ? Number(row.id) : null;
+}
+
+/**
+ * Saves what Claude wrote as one new version: persona fields replace the current ones, examples are added
+ * after the existing ones, card meanings replace those for the same cards, and a document is added.
+ */
+export function applyDraft(
+  id: string,
+  draft: {
+    persona?: Partial<Persona>;
+    examples?: Example[];
+    cardMeanings?: CardMeaning[];
+    document?: { title: string; body: string };
+    app?: Partial<AppProfile>;
+  },
+  label: string,
+) {
+  tx(() => {
+    quietly(() => {
+      const p = getPsychic(id)!;
+      if (draft.persona && Object.keys(draft.persona).length) {
+        const next = { ...p } as Persona;
+        for (const [k, v] of Object.entries(draft.persona)) {
+          if (Array.isArray(v)) (next as Record<string, unknown>)[k] = v.map((x) => String(x).trim()).filter(Boolean);
+          else if (typeof v === "string") (next as Record<string, unknown>)[k] = v.trim();
+        }
+        updatePersona(id, next);
+      }
+      if (draft.examples?.length) replaceExamples(id, [...p.examples, ...draft.examples].slice(0, 60));
+      if (draft.cardMeanings?.length) {
+        const byCard = new Map(p.cardMeanings.map((m) => [m.card, m]));
+        for (const m of draft.cardMeanings) byCard.set(m.card, m);
+        updateDeck(id, { deck: p.deck, cardMeanings: [...byCard.values()] });
+      }
+      if (draft.document?.body.trim()) createDocument(id, draft.document.title.trim(), draft.document.body.trim());
+      if (draft.app && Object.keys(draft.app).length) {
+        const now = getPsychic(id)!;
+        const app = { ...now.app };
+        for (const [k, v] of Object.entries(draft.app)) {
+          if (Array.isArray(v)) (app as Record<string, unknown>)[k] = v.map((x) => String(x).trim()).filter(Boolean);
+          else if (typeof v === "string") (app as Record<string, unknown>)[k] = v.trim();
+        }
+        updateApp(id, app, now.inApp);
+      }
+    });
+    record(id, "claude", label);
   });
 }
 
@@ -320,6 +514,12 @@ const GROUP_MINUTES = 10;
 const KEEP_VERSIONS = 150;
 
 interface Snapshot extends Persona {
+  /** Missing in versions saved before the app profile existed. */
+  app?: AppProfile;
+  inApp?: boolean;
+  /** Missing in versions saved before decks existed. */
+  deck?: DeckId;
+  cardMeanings?: CardMeaning[];
   photoId?: number | null;
   examples: Example[];
   documents: { id: number; title: string; body: string; enabled: boolean }[];
@@ -343,6 +543,11 @@ function snapshotOf(id: string): Snapshot | null {
   for (const f of LIST_FIELDS) persona[f] = p[f];
   return {
     ...persona,
+    howIRead: p.howIRead,
+    deck: p.deck,
+    cardMeanings: p.cardMeanings,
+    app: p.app,
+    inApp: p.inApp,
     photoId: p.photoId,
     examples: p.examples,
     documents: p.documents.map((d) => ({ id: d.id, title: d.title, body: d.body, enabled: d.enabled })),
@@ -420,16 +625,30 @@ export function ensureHistory() {
 const FIELD_LABELS: Record<string, string> = {
   name: "name", specialty: "specialty", backstory: "backstory", voice: "voice", texting: "texting style",
   catchphrases: "catchphrases", never: "never list", quirks: "quirks", others: "the other psychics", ritual: "ritual",
+  howIRead: "how they read",
 };
 
 /** Plain-language list of what differs between two versions. */
 function describeChanges(before: Snapshot | null, after: Snapshot): string[] {
   if (!before) return [];
   const changes: string[] = [];
-  const fields = [...PERSONA_FIELDS, ...LIST_FIELDS].filter(
-    (f) => JSON.stringify(before[f]) !== JSON.stringify(after[f]),
+  const fields = [...PERSONA_FIELDS, ...LIST_FIELDS, "howIRead" as const].filter(
+    (f) => JSON.stringify(before[f] ?? "") !== JSON.stringify(after[f] ?? ""),
   );
   if (fields.length) changes.push(`Changed ${fields.map((f) => FIELD_LABELS[f]).join(", ")}`);
+  if (after.app && JSON.stringify(before.app ?? emptyApp()) !== JSON.stringify(after.app)) changes.push("Changed the app profile");
+  if ((before.inApp ?? false) !== (after.inApp ?? false)) changes.push(after.inApp ? "Shown in the app" : "Hidden from the app");
+  if ((before.deck ?? "tarot") !== (after.deck ?? "tarot")) {
+    changes.push(`Switched to ${after.deck === "playing" ? "playing cards" : "tarot"}`);
+  }
+  const meanings = (s: Snapshot) => new Map((s.cardMeanings ?? []).map((m) => [m.card, JSON.stringify(m)]));
+  const mBefore = meanings(before), mAfter = meanings(after);
+  const cardsChanged = [...new Set([...mBefore.keys(), ...mAfter.keys()])].filter((c) => mBefore.get(c) !== mAfter.get(c));
+  if (cardsChanged.length) {
+    changes.push(cardsChanged.length <= 3
+      ? `Changed the meaning of ${cardsChanged.join(", ")}`
+      : `Changed ${cardsChanged.length} card meanings`);
+  }
   const exBefore = before.examples.length, exAfter = after.examples.length;
   if (JSON.stringify(before.examples) !== JSON.stringify(after.examples)) {
     changes.push(exAfter > exBefore ? `Added ${exAfter - exBefore} example${exAfter - exBefore === 1 ? "" : "s"}`
@@ -483,7 +702,11 @@ export function restore(revisionId: number): string | null {
   const snap = JSON.parse(String(row.snapshot)) as Snapshot;
   tx(() => {
     quietly(() => {
-      updatePersona(id, snap);
+      // Versions from before decks existed don't have them: keep the current ones.
+      const now = getPsychic(id)!;
+      updatePersona(id, { ...snap, howIRead: snap.howIRead ?? now.howIRead });
+      if (snap.deck !== undefined) updateDeck(id, { deck: snap.deck, cardMeanings: snap.cardMeanings ?? [] });
+      if (snap.app !== undefined) updateApp(id, toApp(JSON.stringify(snap.app)), snap.inApp ?? false);
       if (snap.photoId !== undefined) setPhotoPointer(id, snap.photoId);
       replaceExamples(id, snap.examples);
       db.prepare("DELETE FROM documents WHERE psychic_id = ?").run(id);

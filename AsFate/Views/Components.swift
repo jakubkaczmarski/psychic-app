@@ -12,7 +12,11 @@ struct AvatarView: View {
             if let image = photos.image(for: psychic) {
                 Image(uiImage: image).resizable().scaledToFill()
             } else {
-                Theme.surfaceRaised
+                // No photo yet (a psychic added in Psychic Studio): their initial.
+                Theme.surfaceRaised.overlay(
+                    Text(String(psychic.short.prefix(1)).uppercased())
+                        .font(Theme.display(size * 0.42))
+                        .foregroundStyle(Color(hex: psychic.ringHex)))
             }
         }
         .frame(width: size, height: size)

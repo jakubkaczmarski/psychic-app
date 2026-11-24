@@ -1,8 +1,9 @@
 import http from "node:http";
 import Anthropic from "@anthropic-ai/sdk";
 import {
-  STAR_SIGNS, getPsychic, personaPrompt, personaStatus, photoVersions, psychicPhoto, readerPrompt, startPersonaSync,
+  STAR_SIGNS, getPsychic, personaPrompt, personaStatus, psychicListing, psychicPhoto, readerPrompt, startPersonaSync,
 } from "./psychics.ts";
+import { type Spread, SPREADS, drawSpread, isSpread, openSpread, publicCard, spreadNote } from "./cards.ts";
 
 // ---- Config (environment variables) ----
 const PORT = Number(process.env.PORT ?? 8787);
@@ -63,6 +64,8 @@ interface ReadingRequest {
   memory: string[];
   /** Today's mood for this psychic, chosen by the app. */
   mood: string | null;
+  /** Cards to draw for this message: a new spread, or the next card of one in progress. */
+  draw: { spread: Spread; turned: number } | null;
 }
 
 const MAX_MEMORY = 10;
@@ -102,7 +105,27 @@ function parseReading(body: unknown): ReadingRequest | string {
 
   const mood = typeof b.mood === "string" && b.mood.trim() ? b.mood.replace(/\s+/g, " ").trim().slice(0, 80) : null;
 
-  return { psychicId: b.psychicId, userName, sign, messages, memory, mood };
+  let draw: ReadingRequest["draw"] = null;
+  if (b.draw !== undefined && b.draw !== null) {
+    const d = b.draw as Record<string, unknown>;
+    if (typeof d !== "object") return "draw must be an object.";
+    if (typeof d.token === "string") {
+      // The next card of a spread drawn earlier.
+      const spread = openSpread(d.token);
+      if (!spread || spread.psychicId !== b.psychicId) return "That spread can't be continued. Draw new cards.";
+      const total = SPREADS[spread.spread].positions.length;
+      const turned = typeof d.turn === "number" && Number.isInteger(d.turn) ? d.turn : NaN;
+      if (!(turned >= 1 && turned <= total)) return `turn must be a whole number from 1 to ${total}.`;
+      draw = { spread, turned };
+    } else if (isSpread(d.spread)) {
+      const persona = getPsychic(b.psychicId)!;
+      draw = { spread: drawSpread(b.psychicId, persona.deck ?? "tarot", d.spread), turned: 1 };
+    } else {
+      return `draw needs a spread (${Object.keys(SPREADS).join(", ")}) or a token and turn.`;
+    }
+  }
+
+  return { psychicId: b.psychicId, userName, sign, messages, memory, mood, draw };
 }
 
 async function readJSON(req: http.IncomingMessage): Promise<unknown> {
@@ -167,6 +190,25 @@ async function handleReading(req: http.IncomingMessage, res: http.ServerResponse
   });
   const emit = (event: object) => res.write(JSON.stringify(event) + "\n");
 
+  // Cards come first, so the app can lay them on the table while the psychic "reads" them.
+  // The note is added to the question here, so the reading always matches the real draw;
+  // the app keeps it with the question so later turns remember what came up.
+  if (parsed.draw) {
+    const { spread, turned } = parsed.draw;
+    const note = spreadNote(spread, turned, persona.cardMeanings);
+    const { name, positions } = SPREADS[spread.spread];
+    emit({
+      type: "cards",
+      token: spread.token,
+      deck: spread.deck,
+      spread: { id: spread.spread, name, positions },
+      turned,
+      cards: spread.cards.slice(0, turned).map((c, i) => publicCard(c, positions[i])),
+      note,
+    });
+    parsed.messages.at(-1)!.content += "\n\n" + note;
+  }
+
   const stream = client.beta.messages.stream({
     model: MODEL,
     max_tokens: 2000,
@@ -227,10 +269,11 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/health") {
       return sendJSON(res, 200, { ok: true, model: MODEL, personas: personaStatus() });
     }
-    // Photo versions, so the app only downloads photos that changed.
+    // Every psychic with its app profile and photo version: the app shows new psychics from here,
+    // and only downloads photos that changed.
     if (req.method === "GET" && url.pathname === "/v1/psychics") {
       res.writeHead(200, { "content-type": "application/json", "cache-control": "no-cache" });
-      return res.end(JSON.stringify({ psychics: photoVersions() }));
+      return res.end(JSON.stringify({ psychics: psychicListing() }));
     }
     const photoMatch = url.pathname.match(/^\/v1\/psychics\/([a-z0-9-]{1,32})\/photo$/);
     if (req.method === "GET" && photoMatch) {

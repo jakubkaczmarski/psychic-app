@@ -29,25 +29,6 @@
     <section id="editor" class="editor" aria-live="polite"></section>
   </div>
 
-  <dialog id="new-dialog">
-    <form id="new-form" method="dialog">
-      <h2>New psychic</h2>
-      <label for="new-name">Name</label>
-      <input id="new-name" required maxlength="200" placeholder="Auntie Luna" autocomplete="off">
-      <p class="hint row"><span id="new-id-preview"></span> <button id="new-id-edit" class="link" type="button">Change id</button></p>
-      <div id="new-id-field" hidden>
-        <label for="new-id">Id</label>
-        <input id="new-id" maxlength="32" placeholder="luna" autocomplete="off">
-        <p class="hint">Lowercase letters, numbers and dashes. The app uses it to pick this psychic, and it can't be changed later.</p>
-      </div>
-      <p class="hint">You'll fill in their character next. Note: the iOS app needs an update before users can choose a new psychic.</p>
-      <p id="new-error" class="error" role="alert"></p>
-      <div class="row end">
-        <button type="button" class="ghost" id="new-cancel">Cancel</button>
-        <button type="submit" class="primary">Create psychic</button>
-      </div>
-    </form>
-  </dialog>
 
   <div id="toast" class="toast" role="status" hidden></div>
 </body>

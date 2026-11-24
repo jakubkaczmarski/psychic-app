@@ -21,12 +21,35 @@ A `# Name` title, then these `##` sections, all required:
 | Quirks | Habits that show up in readings |
 | Others | What they think of the other psychics |
 | Ritual | How they read the result of their ritual button in the app |
+| How I read | Optional. Their method with cards: do they ask a question before drawing, how much they hedge, do they name a card or hint at it first, how they handle a hard card |
 
 ## `examples.md` (required)
 
 Each `## ` heading is something a user says; the text under it is the psychic's reply. Blank lines in a
 reply become separate chat bubbles. More examples is the best way to sharpen a voice, but vary them:
 the psychic is told to match the voice, never copy the lines.
+
+## `deck.md` (optional)
+
+Which deck they read from, and their own readings of particular cards. The server draws real cards (a shuffled
+deck, no repeats; tarot cards can land reversed) and tells the psychic each card's traditional meaning. A card
+listed here is read the psychic's way instead. A handful of favourite or feared cards is plenty.
+
+```markdown
+# Deck
+
+Deck: playing cards
+
+## Nine of Hearts
+
+Upright: The wish card. Lela called it the only card worth praying for.
+Reversed: (tarot only)
+Memory: It turned up for her eldest the week before he met his wife.
+```
+
+`Deck:` is `tarot` (the default) or `playing cards`. Each `## ` heading is a card's name: "The Tower",
+"Ten of Swords", "Queen of Spades". Any of the three lines can be left out; a section without them is all
+upright meaning. Cards that aren't in the deck are skipped with a warning.
 
 ## Any other `.md` file (optional)
 

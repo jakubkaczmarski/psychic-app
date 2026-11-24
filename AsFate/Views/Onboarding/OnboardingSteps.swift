@@ -10,7 +10,7 @@ struct WelcomeStep: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 28) {
                     HStack(spacing: -14) {
-                        ForEach(Catalog.psychics) { p in
+                        ForEach(Catalog.psychics.prefix(6)) { p in
                             AvatarView(psychic: p, size: 58)
                                 .overlay(Circle().stroke(Theme.bg, lineWidth: 3))
                         }

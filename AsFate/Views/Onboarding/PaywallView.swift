@@ -44,7 +44,7 @@ struct PaywallView: View {
         if let goal, goal.psychicID == psychic.id { return goal.yourTopic }
         let fallback = ["selene": "your love life", "kaz": "your career", "ivy": "your life choices",
                         "zephyr": "your week ahead", "mirela": "your family"]
-        return fallback[psychic.id] ?? "you"
+        return fallback[psychic.id] ?? (psychic.specialty.isEmpty ? "you" : "your \(psychic.specialty.lowercased())")
     }
     private var others: [Psychic] { Catalog.psychics.filter { $0.id != psychic.id } }
 
@@ -185,7 +185,7 @@ struct PaywallView: View {
                 "zephyr": "the ball has your answer!! it's right there",
                 "mirela": "I have your answer, my dear. Come, read it.",
             ]
-            return lines[psychic.id] ?? lines["selene"]!
+            return lines[psychic.id] ?? "I have your answer. Unlock Fate+ and it's yours."
         }
         let lines: [String: String] = [
             "selene": "Darling, I've barely begun with {topic}. Stay a while.",

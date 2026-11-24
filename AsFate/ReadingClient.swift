@@ -19,6 +19,21 @@ struct ReadingClient {
         let messages: [Turn]
         let memory: [String]
         let mood: String?
+        let draw: DrawRequest?
+    }
+
+    /// `{"type":"cards", …}`: the cards turned for this question, sent before the reply.
+    private struct CardsEvent: Decodable {
+        struct Spread: Decodable { let id: String; let name: String; let positions: [String] }
+        let token: String
+        let deck: String
+        let spread: Spread
+        let cards: [DrawnCard]
+        let note: String
+
+        var cardSpread: CardSpread {
+            CardSpread(token: token, deck: deck, kind: spread.id, name: spread.name, positions: spread.positions, cards: cards)
+        }
     }
 
     struct ServerError: LocalizedError {
@@ -36,7 +51,11 @@ struct ReadingClient {
         return (response as? HTTPURLResponse)?.statusCode == 200
     }
 
+    /// Streams a reply. With `draw`, the server draws the cards first and calls `onCards` with them and the
+    /// note it gave the psychic (keep it with the question, so later turns remember the cards).
     func stream(psychicID: String, userName: String, sign: String?, turns: [Turn], memory: [String] = [], mood: String? = nil,
+                draw: DrawRequest? = nil,
+                onCards: @escaping @MainActor (CardSpread, String) -> Void = { _, _ in },
                 onText: @escaping @MainActor (String) -> Void) async throws {
         var request = URLRequest(url: baseURL.appendingPathComponent("v1/reading"))
         request.httpMethod = "POST"
@@ -44,7 +63,7 @@ struct ReadingClient {
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.setValue(deviceID, forHTTPHeaderField: "x-device-id")
         if !Self.appKey.isEmpty { request.setValue(Self.appKey, forHTTPHeaderField: "x-moonlit-key") }
-        request.httpBody = try JSONEncoder().encode(Body(psychicId: psychicID, userName: userName, sign: sign, messages: turns, memory: memory, mood: mood))
+        request.httpBody = try JSONEncoder().encode(Body(psychicId: psychicID, userName: userName, sign: sign, messages: turns, memory: memory, mood: mood, draw: draw))
 
         let bytes: URLSession.AsyncBytes
         let response: URLResponse
@@ -69,6 +88,10 @@ struct ReadingClient {
             switch type {
             case "text":
                 if let text = event["text"] as? String { await onText(text) }
+            case "cards":
+                if let cards = try? JSONDecoder().decode(CardsEvent.self, from: data) {
+                    await onCards(cards.cardSpread, cards.note)
+                }
             case "done":
                 finished = true
             case "error":

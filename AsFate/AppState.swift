@@ -258,13 +258,20 @@ final class AppState: ObservableObject {
     func checkServer() async {
         guard let client else { serverOnline = nil; return }
         serverOnline = await client.health()
-        if serverOnline == true { await PsychicPhotos.shared.sync(baseURL: client.baseURL) }
+        if serverOnline == true { await syncDirectory(client) }
     }
 
     /// Downloads psychic photos that changed in Psychic Studio. Unchanged ones aren't fetched again.
     func syncPhotos() {
         guard let client else { return }
-        Task { await PsychicPhotos.shared.sync(baseURL: client.baseURL) }
+        Task { await syncDirectory(client) }
+    }
+
+    /// Fetches the psychics from the server (text set in Psychic Studio, new psychics) and their photos.
+    private func syncDirectory(_ client: ReadingClient) async {
+        if await PsychicPhotos.shared.sync(baseURL: client.baseURL) {
+            objectWillChange.send() // the list of psychics changed: redraw
+        }
     }
 
     // MARK: Readings
@@ -427,25 +434,99 @@ final class AppState: ObservableObject {
 
     /// Sends a question. `note` is extra context for Claude that isn't shown in the bubble.
     /// With `ritual` (or a question asking for a card), the psychic performs their ritual first.
-    func send(_ raw: String, to p: Psychic, note: String? = nil, ritual: Bool = false, free: Bool = false) {
+    /// With a live server, cards are drawn by the server: `spread` lays out new cards, and while a spread is on
+    /// the table, the next message turns its next card. Mirela's ritual and questions asking for cards draw too.
+    func send(_ raw: String, to p: Psychic, note: String? = nil, ritual: Bool = false, spread: SpreadKind? = nil, free: Bool = false) {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, answeringFor == nil, !isLimitReached else { return }
-        let meter = free ? (locked: false, usedFree: false) : meterMessage()
 
         var user = ChatMessage(role: .user, text: text, apiNote: note)
         var performed: Ritual?
-        if note == nil, ritual || Self.wantsCard(text) {
+        var newSpread: SpreadKind?
+        if note == nil, isLive {
+            let asked = ritual ? nil : Self.requestedSpread(text)
+            let table = ritual ? nil : spreadOnTable(for: p)
+            if let chosen = spread ?? (ritual && Self.ritualDrawsCards(p) ? .single : nil) {
+                newSpread = chosen
+            } else if let table, asked == nil || Self.asksForNextCard(text) {
+                // With cards still face down, any reply turns the next one.
+                user.draw = DrawRequest(token: table.token, turn: table.cards.count + 1)
+            } else {
+                newSpread = asked
+            }
+            if let newSpread { user.draw = DrawRequest(spread: newSpread.rawValue) }
+        }
+        // Laying out a spread counts as a message; turning its next card is free, so a spread can always be finished.
+        let turnsCard = user.draw?.token != nil
+        let meter = free || turnsCard ? (locked: false, usedFree: false) : meterMessage()
+        if note == nil, user.draw == nil, ritual || Self.wantsCard(text) {
             let result = Rituals.perform(for: p.id, sign: sign)
             performed = result.ritual
             user.apiNote = result.note
         }
         threads[p.id, default: []].append(user)
-        trackMessage(to: p, ritual: performed != nil)
+        trackMessage(to: p, ritual: performed != nil || newSpread != nil)
         if let performed {
             threads[p.id, default: []].append(ChatMessage(role: .psychic, text: Rituals.style(for: p.id).intro))
             threads[p.id, default: []].append(ChatMessage(role: .ritual, text: performed.detail, ritual: performed))
         }
+        if let newSpread {
+            let style = Rituals.style(for: p.id)
+            let intro = newSpread == .single
+                ? (Self.ritualDrawsCards(p) ? style.intro : p.cardIntro)
+                : Self.fill(style.spreadIntro, count: newSpread.count)
+            threads[p.id, default: []].append(ChatMessage(role: .psychic, text: intro))
+        }
         respond(as: p, to: text, ritual: performed, locked: meter.locked, usedFree: meter.usedFree)
+    }
+
+    /// Lays out a spread with this psychic.
+    func drawSpread(_ kind: SpreadKind, with p: Psychic) {
+        send(kind.request, to: p, spread: kind)
+    }
+
+    /// Turns the next card of the spread on the table.
+    func turnNextCard(with p: Psychic) {
+        send("Turn the next card.", to: p)
+    }
+
+    /// Mirela's ritual is drawing a card, so with a live server it's a real draw.
+    static func ritualDrawsCards(_ p: Psychic) -> Bool { p.id == "mirela" || !p.isBuiltIn }
+
+    private static let numberWords = [1: "one", 2: "two", 3: "three", 4: "four", 5: "five"]
+
+    /// Puts the number of cards into a spread intro, capitalised where it starts a sentence.
+    static func fill(_ template: String, count: Int) -> String {
+        let word = numberWords[count] ?? String(count)
+        var out = template
+        for start in ["{n}"] where out.hasPrefix(start) { out = word.capitalized + out.dropFirst(start.count) }
+        for end in [". ", "! ", "? ", "… "] { out = out.replacingOccurrences(of: end + "{n}", with: end + word.capitalized) }
+        // All-lowercase voices (Zephyr) stay lowercase.
+        if template == template.lowercased() { return out.replacingOccurrences(of: "{n}", with: word).lowercased() }
+        return out.replacingOccurrences(of: "{n}", with: word)
+    }
+
+    /// "Next", "turn", "flip": the user wants the next card of the spread on the table.
+    static func asksForNextCard(_ text: String) -> Bool {
+        let t = text.lowercased()
+        return ["next", "turn", "flip", "go on", "continue"].contains(where: t.contains)
+    }
+
+    /// A spread in this visit with cards still face down, as of its latest turn.
+    func spreadOnTable(for p: Psychic) -> CardSpread? {
+        let thread = threads[p.id] ?? []
+        guard let latest = thread[visitStart(in: thread)...].last(where: { $0.role == .spread })?.spread,
+              !latest.isComplete else { return nil }
+        return latest
+    }
+
+    /// The spread a question asks for, if it asks for cards: "three cards" lays out three, and so on.
+    static func requestedSpread(_ text: String) -> SpreadKind? {
+        guard wantsCard(text) || text.lowercased().contains("cards") else { return nil }
+        let t = text.lowercased()
+        if ["cross", "five", "5 cards", "celtic"].contains(where: t.contains) { return .cross }
+        if ["three", "3 cards", "past present", "spread"].contains(where: t.contains) { return .three }
+        return .single
     }
 
     /// Counts the message within the current visit, so analytics shows messages per visit.
@@ -513,9 +594,22 @@ final class AppState: ObservableObject {
             return
         }
 
+        // Cards drawn with this question are laid on the table as soon as the server sends them.
+        let draw = userMessageID.flatMap { id in threads[p.id]?.first { $0.id == id }?.draw }
+        var laidOut: UUID?
+        let onCards: @MainActor (CardSpread, String) -> Void = { [weak self] spread, note in
+            guard let self else { return }
+            // Keep the note with the question, so later turns know which cards came up.
+            if let userMessageID { self.update(p.id, userMessageID) { $0.apiNote = note } }
+            let message = ChatMessage(role: .spread, text: spread.cards.last?.name ?? "", spread: spread)
+            laidOut = message.id
+            self.threads[p.id, default: []].append(message)
+        }
+
         // Fetch the reply while the psychic "reads" the message.
-        async let fetched = fetchReply(p, question: question, ritual: ritual,
-                                       history: history, memory: memory, name: name, sign: sign)
+        async let fetched = fetchReply(p, question: question, ritual: ritual || draw != nil,
+                                       history: history, memory: memory, name: name, sign: sign,
+                                       draw: draw, onCards: onCards)
         try? await Task.sleep(for: .seconds(Double.random(in: style.readDelay)))
         if let userMessageID { update(p.id, userMessageID) { $0.seen = true } }
         try? await Task.sleep(for: .seconds(0.4))
@@ -542,6 +636,11 @@ final class AppState: ObservableObject {
                 }
             }
         case .failure(let error):
+            // Cards the psychic never got to read go back: asking again draws or turns them afresh.
+            if let laidOut {
+                threads[p.id]?.removeAll { $0.id == laidOut }
+                if let userMessageID { update(p.id, userMessageID) { $0.apiNote = nil } }
+            }
             let note = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             threads[p.id, default: []].append(ChatMessage(role: .psychic, text: note, isError: true))
             refund()
@@ -550,12 +649,13 @@ final class AppState: ObservableObject {
 
     /// Gets the whole reply from the server (or demo mode). It's shown bubble by bubble, not streamed.
     private func fetchReply(_ p: Psychic, question: String, ritual: Bool, history: [ReadingClient.Turn],
-                            memory: [String], name: String, sign: String?) async -> Result<String, Error> {
+                            memory: [String], name: String, sign: String?, draw: DrawRequest? = nil,
+                            onCards: @escaping @MainActor (CardSpread, String) -> Void = { _, _ in }) async -> Result<String, Error> {
         guard let client else { return .success(demoReply(p, question, ritual: ritual)) }
         let buffer = TextBuffer()
         do {
             try await client.stream(psychicID: p.id, userName: name, sign: sign, turns: history, memory: memory,
-                                    mood: Daily.mood(for: p.id)) { delta in buffer.text += delta }
+                                    mood: Daily.mood(for: p.id), draw: draw, onCards: onCards) { delta in buffer.text += delta }
             serverOnline = true
             return .success(buffer.text)
         } catch {
@@ -605,8 +705,13 @@ final class AppState: ObservableObject {
             if let date = m.date { note += formatter.string(from: date) + ": " }
             note += "asked \"\(m.text.prefix(140))\""
             // Include the ritual result that answered this question, if there was one.
-            if let ritual = earlier[(i + 1)...].prefix(while: { $0.role != .user }).first(where: { $0.role == .ritual })?.ritual {
+            let answer = earlier[(i + 1)...].prefix(while: { $0.role != .user })
+            if let ritual = answer.first(where: { $0.role == .ritual })?.ritual {
                 note += " (ritual result: \(ritual.title))"
+            }
+            if let spread = answer.last(where: { $0.role == .spread })?.spread {
+                let cards = spread.cards.map { $0.reversed ? "\($0.name) reversed" : $0.name }
+                note += " (cards: \(cards.joined(separator: ", ")))"
             }
             notes.append(note)
         }
@@ -638,7 +743,7 @@ final class AppState: ObservableObject {
             switch m.role {
             case .user: push("user", m.apiNote.map { m.text + "\n\n" + $0 } ?? m.text)
             case .psychic: push("assistant", m.text)
-            case .card, .ritual: break
+            case .card, .ritual, .spread: break
             }
         }
         // Lines shown after the question (like "Pulling one card…") aren't part of what Claude answers.
@@ -679,6 +784,7 @@ final class AppState: ObservableObject {
         } else {
             pool = p.general; topic = "general"
         }
+        if pool.isEmpty { return "Ask me again when you're back online. (Demo reply: set a server address in Settings for live readings.)" }
         let key = p.id + topic
         let n = demoTurn[key, default: 0]
         demoTurn[key] = n + 1

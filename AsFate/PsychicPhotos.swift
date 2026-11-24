@@ -38,9 +38,11 @@ final class PsychicPhotos: ObservableObject {
         downloaded[psychic.id] ?? UIImage(named: psychic.imageName)
     }
 
-    /// Downloads photos whose version changed. If the server can't be reached, keeps what's saved.
-    func sync(baseURL: URL) async {
-        guard !syncing else { return }
+    /// Saves the list of psychics (see `PsychicDirectory`) and downloads photos whose version changed.
+    /// If the server can't be reached, keeps what's saved. Returns whether the list of psychics changed.
+    @discardableResult
+    func sync(baseURL: URL) async -> Bool {
+        guard !syncing else { return false }
         syncing = true
         defer { syncing = false }
 
@@ -48,12 +50,14 @@ final class PsychicPhotos: ObservableObject {
             struct Entry: Decodable { let id: String; let photo: String? }
             let psychics: [Entry]
         }
+        struct Directory: Decodable { let psychics: [PsychicDirectory.Entry] }
         var request = URLRequest(url: baseURL.appendingPathComponent("v1/psychics"))
         request.timeoutInterval = 8
         request.cachePolicy = .reloadIgnoringLocalCacheData
         guard let (data, response) = try? await URLSession.shared.data(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200,
-              let listing = try? JSONDecoder().decode(Listing.self, from: data) else { return }
+              let listing = try? JSONDecoder().decode(Listing.self, from: data) else { return false }
+        let changed = (try? JSONDecoder().decode(Directory.self, from: data)).map { PsychicDirectory.update($0.psychics) } ?? false
 
         for entry in listing.psychics where Self.isSafeID(entry.id) {
             guard let version = entry.photo else {
@@ -74,6 +78,7 @@ final class PsychicPhotos: ObservableObject {
             downloaded[entry.id] = image
             saveVersions()
         }
+        return changed
     }
 
     private func remove(_ id: String) {

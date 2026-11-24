@@ -54,7 +54,9 @@ enum Daily {
     ]
 
     static func mood(for psychicID: String, on date: Date = Date()) -> String {
-        pick(moods[psychicID] ?? moods["selene"]!, "mood|\(psychicID)|\(dayKey(date))")
+        let p = Catalog.psychic(psychicID)
+        let list = !p.moods.isEmpty ? p.moods : moods[psychicID] ?? ["Shuffling the deck", "Tea in hand, cards out", "In a reading mood"]
+        return pick(list, "mood|\(psychicID)|\(dayKey(date))")
     }
 
     // MARK: Morning message
@@ -69,7 +71,9 @@ enum Daily {
 
     /// A short message in the psychic's voice about the day's card.
     static func morningMessage(psychicID: String, name: String, card: TarotCard, on date: Date = Date()) -> String {
-        let opening = pick(openings[psychicID] ?? openings["selene"]!, "open|\(psychicID)|\(dayKey(date))")
+        let p = Catalog.psychic(psychicID)
+        let list = !p.morningOpenings.isEmpty ? p.morningOpenings : openings[psychicID] ?? ["Good morning.", "Morning!", "Up and about?"]
+        let opening = pick(list, "open|\(psychicID)|\(dayKey(date))")
         let you = name.isEmpty ? "" : ", \(name)"
         switch psychicID {
         case "kaz":

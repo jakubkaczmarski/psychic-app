@@ -30,7 +30,7 @@ struct ProfileView: View {
 
                 VStack(alignment: .leading, spacing: 8) {
                     EyebrowText("A taste of a reading")
-                    Text("“\(psychic.general[0])”")
+                    Text("“\(psychic.sampleReading)”")
                         .font(Theme.display(21, .regular).italic())
                         .foregroundStyle(Theme.textBright)
                         .lineSpacing(2)

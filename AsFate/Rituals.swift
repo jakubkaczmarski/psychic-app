@@ -14,12 +14,14 @@ struct Ritual: Codable, Hashable {
 /// How each psychic's ritual is presented in the chat.
 struct RitualStyle {
     /// Label of the ritual button in the chat.
-    let button: String
-    let buttonSymbol: String
+    var button: String
+    var buttonSymbol: String
     /// What the psychic says while performing it.
-    let intro: String
+    var intro: String
     /// Greeting when the user comes back after a while. `{name}` is replaced.
-    let welcomeBack: String
+    var welcomeBack: String
+    /// What they say while laying out a spread of several cards. `{n}` is the number of cards.
+    var spreadIntro: String
     /// Typing speed in characters per second: Ivy is slow, Kaz and Zephyr are fast.
     var typingSpeed: Double = 20
     /// Seconds spent "reading" the user's message before typing starts.
@@ -27,30 +29,51 @@ struct RitualStyle {
 }
 
 enum Rituals {
+    /// The psychic's style, with any text set in Psychic Studio. Psychics added there draw a card as their ritual.
     static func style(for psychicID: String) -> RitualStyle {
-        styles[psychicID] ?? styles["selene"]!
+        let p = Catalog.psychic(psychicID)
+        var style = p.isBuiltIn ? (styles[p.id] ?? styles["selene"]!)
+            : RitualStyle(button: "Draw a card", buttonSymbol: "rectangle.portrait.on.rectangle.portrait",
+                          intro: p.cardIntro, welcomeBack: "{name}, you're back. What's on your mind today?",
+                          spreadIntro: "Laying out {n} cards, face down. We'll turn them one at a time.")
+        if let v = p.ritualButton { style.button = v }
+        if let v = p.ritualIntro { style.intro = v }
+        if let v = p.welcomeBack { style.welcomeBack = v }
+        if let v = p.spreadIntro { style.spreadIntro = v }
+        switch p.typing {
+        case "slow": style.typingSpeed = 13; style.readDelay = 1.4...2.2
+        case "medium": style.typingSpeed = 22; style.readDelay = 0.8...1.4
+        case "fast": style.typingSpeed = 42; style.readDelay = 0.3...0.7
+        default: break
+        }
+        return style
     }
 
     private static let styles: [String: RitualStyle] = [
         "selene": .init(button: "Read tonight's moon", buttonSymbol: "moon.stars",
                         intro: "Let me draw back the curtain and look at the moon for you…",
                         welcomeBack: "There you are, {name}. The moon has changed since we last spoke, and I wondered about you.",
+                        spreadIntro: "Breathe with me, dear one… I'm laying {n} cards face down. We'll turn them one at a time.",
                         typingSpeed: 16, readDelay: 1.2...2.0),
         "kaz": .init(button: "Run my forecast", buttonSymbol: "chart.line.uptrend.xyaxis",
                      intro: "Running your numbers. Give me a second.",
                      welcomeBack: "{name}. Back for the next quarter. Good. Let's review.",
+                     spreadIntro: "{n} cards. One slide at a time.",
                      typingSpeed: 45, readDelay: 0.3...0.6),
         "ivy": .init(button: "Swirl the cup", buttonSymbol: "cup.and.saucer",
                      intro: "Swirl it three times, love, then turn it over on the saucer. Let's see…",
                      welcomeBack: "Oh, {name}, you came back! Sit down, love, I'll put the kettle on.",
+                     spreadIntro: "Cards, is it? I'm no expert, love, but let's lay out {n} and have a look, one at a time.",
                      typingSpeed: 11, readDelay: 1.6...2.6),
         "zephyr": .init(button: "Shake the crystal ball", buttonSymbol: "sparkles",
                         intro: "okay hold on, shaking the ball… it's going cloudy… ooh.",
                         welcomeBack: "{name}!! the ball literally glowed when you walked in. welcome back to the chaos.",
+                        spreadIntro: "okay laying out {n} cards face down. no peeking. we flip them one by one",
                         typingSpeed: 38, readDelay: 0.3...0.8),
         "mirela": .init(button: "Cut the deck", buttonSymbol: "suit.heart",
                         intro: "Cut the deck with your left hand, my dear. Now, let me turn one over…",
                         welcomeBack: "{name}, you're back. Sit, sit. I had a feeling you'd come today.",
+                        spreadIntro: "Cut the deck with your left hand, my dear. {n} cards, face down. We turn them one by one.",
                         typingSpeed: 22, readDelay: 0.8...1.4),
     ]
 

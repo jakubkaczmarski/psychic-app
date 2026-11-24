@@ -5,8 +5,10 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { checkConfig, hasReadToken, isSignedIn, signIn, signOut, tooManyAttempts } from "./auth.ts";
+import { DECKS, isDeck } from "./cards.ts";
+import { type DraftRequest, DraftError, claudeAvailable, draft } from "./claude.ts";
 import * as db from "./db.ts";
-import { seedFrom } from "./seed.ts";
+import { fillReadingStylesFrom, seedFrom } from "./seed.ts";
 
 const PORT = Number(process.env.PORT ?? 8790);
 const PUBLIC_DIR = path.join(import.meta.dirname, "..", "public");
@@ -18,10 +20,14 @@ if (problems.length) {
   process.exit(1);
 }
 
+const seedDir = path.resolve(process.env.STUDIO_SEED_DIR ?? path.join(import.meta.dirname, "..", "..", "server", "psychics"));
 if (db.isEmpty()) {
-  const seedDir = path.resolve(process.env.STUDIO_SEED_DIR ?? path.join(import.meta.dirname, "..", "..", "server", "psychics"));
   const n = seedFrom(seedDir);
   if (n) console.log(`Imported ${n} psychics from ${seedDir}.`);
+} else if (db.addedDecks) {
+  // First start since decks were added: bring in each psychic's "How I read" and deck from the files.
+  const filled = fillReadingStylesFrom(seedDir);
+  if (filled.length) console.log(`Added how ${filled.join(", ")} read cards, from ${seedDir}.`);
 }
 db.ensureHistory();
 importAppPhotos();
@@ -69,6 +75,7 @@ const MAX_LIST_ITEM = 300;
 const MAX_EXAMPLES = 60;
 const MAX_DOC = 100_000;
 const MAX_TITLE = 120;
+const MAX_MEANING = 1000;
 const ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,31}$/;
 
 class BadRequest extends Error {}
@@ -91,8 +98,53 @@ function parsePersona(body: Record<string, unknown>): db.Persona {
   const p = {} as db.Persona;
   for (const f of db.PERSONA_FIELDS) p[f] = text(body[f] ?? "", f);
   for (const f of db.LIST_FIELDS) p[f] = list(body[f] ?? [], f);
+  p.howIRead = text(body.howIRead ?? "", "How they read");
   if (!p.name) throw new BadRequest("A psychic needs a name.");
   return p;
+}
+
+function parseApp(value: unknown): db.AppProfile {
+  const o = (value && typeof value === "object" ? value : {}) as Record<string, unknown>;
+  const app = db.emptyApp();
+  for (const f of db.APP_TEXT_FIELDS) app[f] = text(o[f] ?? "", f, 2000);
+  for (const f of db.APP_LIST_FIELDS) app[f] = list(o[f] ?? [], f);
+  if (app.color && !/^#[0-9a-fA-F]{6}$/.test(app.color)) throw new BadRequest("The colour must look like #6A58B4.");
+  if (app.typing && !["slow", "medium", "fast"].includes(app.typing)) throw new BadRequest("Typing speed is slow, medium or fast.");
+  return app;
+}
+
+function parseDraftRequest(body: Record<string, unknown>): DraftRequest {
+  const r: DraftRequest = {};
+  if (body.app === "empty" || body.app === "all") r.app = body.app;
+  if (body.persona === "empty" || body.persona === "all") r.persona = body.persona;
+  if (typeof body.examples === "number" && body.examples > 0) r.examples = Math.min(Math.floor(body.examples), 12);
+  if (body.cards && typeof body.cards === "object") {
+    const c = body.cards as Record<string, unknown>;
+    r.cards = {
+      names: Array.isArray(c.names) ? c.names.filter((n): n is string => typeof n === "string").slice(0, 20) : undefined,
+      count: typeof c.count === "number" ? Math.min(Math.max(Math.floor(c.count), 1), 20) : undefined,
+    };
+  }
+  if (typeof body.document === "string" && body.document.trim()) r.document = text(body.document, "Document topic", 300);
+  if (typeof body.notes === "string") r.notes = text(body.notes, "Notes", 2000);
+  if (!r.persona && !r.app && !r.examples && !r.cards && !r.document) throw new BadRequest("Pick at least one thing for Claude to write.");
+  return r;
+}
+
+function parseDeck(body: Record<string, unknown>): db.Deck {
+  if (!isDeck(body.deck)) throw new BadRequest('deck must be "tarot" or "playing".');
+  if (!Array.isArray(body.cardMeanings)) throw new BadRequest("cardMeanings must be a list.");
+  if (body.cardMeanings.length > 78) throw new BadRequest("There are at most 78 cards.");
+  const cardMeanings = body.cardMeanings.map((m) => {
+    const o = (m ?? {}) as Record<string, unknown>;
+    return {
+      card: text(o.card ?? "", "Card", 60),
+      upright: text(o.upright ?? "", "Upright meaning", MAX_MEANING),
+      reversed: text(o.reversed ?? "", "Reversed meaning", MAX_MEANING),
+      memory: text(o.memory ?? "", "Memory", MAX_MEANING),
+    };
+  });
+  return { deck: body.deck, cardMeanings };
 }
 
 function parseExamples(value: unknown): db.Example[] {
@@ -180,7 +232,8 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     return send(res, 200, { ok: true });
   }
   if (!isSignedIn(req)) return fail(res, 401, "Sign in first.");
-  if (parts[0] === "me") return send(res, 200, { ok: true });
+  if (parts[0] === "me") return send(res, 200, { ok: true, claude: claudeAvailable() });
+  if (parts[0] === "decks" && method === "GET") return send(res, 200, { decks: DECKS });
 
   // /api/psychics
   if (parts[0] === "psychics" && parts.length === 1) {
@@ -202,7 +255,9 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     const id = parts[1];
     const psychic = db.getPsychic(id);
     if (!psychic) return fail(res, 404, "No such psychic.");
-    const withStatus = (p: db.Psychic) => ({ ...p, missing: db.missingParts(p), published: db.publish(p) });
+    const withStatus = (p: db.Psychic) => ({
+      ...p, missing: db.missingParts(p), appMissing: db.missingForApp(p), builtIn: db.BUILT_IN.has(p.id), published: db.publish(p),
+    });
 
     if (parts.length === 2) {
       if (method === "GET") return send(res, 200, { psychic: withStatus(psychic) });
@@ -214,6 +269,32 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
         db.deletePsychic(id);
         return send(res, 200, { ok: true });
       }
+    }
+    if (parts[2] === "claude" && method === "POST") {
+      const request = parseDraftRequest(await readJSON(req));
+      const cast = db.listPsychics().map((c) => ({ id: c.id, name: c.name, specialty: c.specialty }));
+      const result = await draft(psychic, cast, request);
+      const undoVersionId = db.latestVersionId(id);
+      const wrote = [
+        result.persona && Object.keys(result.persona).length && "the persona",
+        result.app && Object.keys(result.app).length && "the app profile",
+        result.examples?.length && `${result.examples.length} example${result.examples.length === 1 ? "" : "s"}`,
+        result.cardMeanings?.length && `${result.cardMeanings.length} card meaning${result.cardMeanings.length === 1 ? "" : "s"}`,
+        result.document && `“${result.document.title || "a document"}”`,
+      ].filter(Boolean) as string[];
+      if (!wrote.length) throw new BadRequest("There was nothing to write: every field you asked for is already filled in.");
+      const summary = wrote.length === 1 ? wrote[0] : `${wrote.slice(0, -1).join(", ")} and ${wrote.at(-1)}`;
+      db.applyDraft(id, result, `Claude wrote ${summary}`);
+      return send(res, 200, { psychic: withStatus(db.getPsychic(id)!), summary, undoVersionId });
+    }
+    if (parts[2] === "app" && method === "PUT") {
+      const body = await readJSON(req);
+      db.updateApp(id, parseApp(body.app), typeof body.inApp === "boolean" ? body.inApp : psychic.inApp);
+      return send(res, 200, { psychic: withStatus(db.getPsychic(id)!) });
+    }
+    if (parts[2] === "deck" && method === "PUT") {
+      db.updateDeck(id, parseDeck(await readJSON(req)));
+      return send(res, 200, { psychic: withStatus(db.getPsychic(id)!) });
     }
     if (parts[2] === "examples" && method === "PUT") {
       db.replaceExamples(id, parseExamples((await readJSON(req)).examples));
@@ -300,6 +381,7 @@ const server = http.createServer(async (req, res) => {
     fail(res, 404, "Not found.");
   } catch (err) {
     if (err instanceof BadRequest) return fail(res, 400, err.message);
+    if (err instanceof DraftError) return fail(res, 502, err.message);
     console.error("Unhandled error:", err);
     if (!res.headersSent) fail(res, 500, "Something went wrong.");
     else res.end();

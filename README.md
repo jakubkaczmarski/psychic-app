@@ -188,7 +188,7 @@ Rate limits are kept in memory, so they reset when the server restarts and only 
 
 ## Psychic Studio (`studio/`)
 
-A separate service with a web interface for writing each psychic's persona, example replies and background documents. The iOS app never talks to it: the reading server fetches finished personas from it, so an edit reaches readings within a minute without a deploy. Setup and details are in [studio/README.md](studio/README.md).
+A separate service with a web interface for writing each psychic's persona, example replies and background documents, and for making new psychics step by step (Claude can draft them). The iOS app never talks to it: the reading server fetches finished personas from it, so an edit reaches readings within a minute without a deploy, and the app gets new psychics and their text from the reading server (`GET /v1/psychics`) without an app update. Setup and details are in [studio/README.md](studio/README.md).
 
 ```
 iOS app ──► reading server (server/) ──► Claude
